@@ -1,0 +1,47 @@
+schema: spec-driven
+
+# When to use OpenSpec at all (vs. a direct /devflow:dev-loop change) is decided by the
+# "OpenSpec: khi nào dùng" section of CLAUDE.md, not here.
+
+context: |
+  Language: Vietnamese
+  All artifacts must be written in Vietnamese.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+  Code identifiers, file paths, API paths and change names stay in English (kebab-case).
+
+  Product: <tên sản phẩm — 1 dòng mô tả nghiệp vụ>.
+  Roles: <các vai trò người dùng>.
+
+  Tech stack:
+  - <backend / frontend / DB / cách quản lý schema>
+  - Commits: Conventional Commits, scope = module name.
+  - Project rules: CLAUDE.md.
+
+  Domain terms: <thuật ngữ nghiệp vụ hay gặp>.
+
+rules:
+  proposal:
+    - "Include a Non-goals section."
+    - "State which roles and which screens are affected."
+    - "State whether existing production data is affected; if yes, name the migration / data tool."
+  specs:
+    - "Group capabilities by module name."
+    - "Every requirement has at least one Scenario written as WHEN/THEN with concrete business examples, not abstract placeholders."
+    - "For business-rule changes, add an examples table per capability (columns: #, Dữ liệu có sẵn, Đầu vào / thao tác, Kết quả mong đợi, Nguồn) with normal, edge and not-allowed rows. Never invent expected outputs: rows not confirmed by the user have Nguồn = chưa xác nhận."
+  design:
+    - "Include a 'Thay đổi DB' section (new/changed tables and columns, and the migration each needs)."
+    - "Include a 'Rollback' section."
+    - "Include a 'Ma trận test' section mapping each requirement / example row to a test level (unit, integration, automation) and test name. New tests are proposed, not mandatory: if the user declines, write that decision in this section instead."
+  tasks:
+    - "Tasks are small enough for one Conventional Commit each."
+    - "Add test tasks exactly as agreed in design.md's Ma trận test; write them before the implementation task they cover."
+    - "Last group is verification: related tests, then `npm run check` (the land gate)."
+
+operations:
+  apply:
+    guidance:
+      - "Follow CLAUDE.md hard rules; never skip tests."
+      - "If the same failure survives two fix attempts, stop and update design.md before continuing."
+  archive:
+    guidance:
+      - "Archive only after the change has landed in dev (npm run land, whose gate replaces CI)."

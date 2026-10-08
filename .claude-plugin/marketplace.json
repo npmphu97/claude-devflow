@@ -1,0 +1,16 @@
+{
+  "name": "devflow-local",
+  "owner": {
+    "name": "Nguyen Phan Minh Phu"
+  },
+  "plugins": [
+    {
+      "name": "devflow",
+      "source": "./plugins/devflow",
+      "description": "Local-first agent workflow: dev-loop, ship/land/promote, verifier, handoff, retro, guard hook."
+    }
+  ],
+  "metadata": {
+    "description": "Local marketplace for the devflow plugin: local-first agent workflow for any repo."
+  }
+}

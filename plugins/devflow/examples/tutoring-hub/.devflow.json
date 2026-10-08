@@ -1,0 +1,40 @@
+{
+  "$comment": "tutoring-hub (Spring Boot + Angular monorepo) expressed as devflow config: same gate and hard rules as its scripts/git-flow.mjs + scripts/hard-rules.mjs.",
+  "integrationBranch": "dev",
+  "releaseBranch": "main",
+  "remote": "origin",
+  "linkDirs": ["node_modules", "frontend/node_modules", ".husky/_"],
+  "commitlint": true,
+  "areas": [
+    {
+      "name": "frontend",
+      "paths": ["frontend/"],
+      "eslint": { "cwd": "frontend", "extensions": [".ts", ".html"] },
+      "commands": [{ "label": "ng build", "cwd": "frontend", "run": "node node_modules/@angular/cli/bin/ng.js build" }]
+    },
+    {
+      "name": "backend",
+      "paths": ["backend/"],
+      "commands": [{
+        "label": "backend unit tests (no DB)",
+        "cwd": "backend",
+        "run": "./mvnw -B test '-Dtest=!**/e2e/**,!*FlowTest,!TutoringHubApplicationTests'",
+        "runWin": "mvnw.cmd -B test \"-Dtest=!**/e2e/**,!*FlowTest,!TutoringHubApplicationTests\""
+      }]
+    }
+  ],
+  "versionFiles": ["package.json", "frontend/package.json", { "file": "backend/pom.xml", "type": "maven" }],
+  "rules": [
+    { "level": "ERROR", "files": "^backend/src/main/.*Controller\\.java$", "added": "^\\s*import\\s+[\\w.]+Repository\\s*;", "msg": "controller import repository (luật 6: controller chỉ gọi service)" },
+    { "level": "ERROR", "files": "^frontend/src/.*\\.(ts|html)$", "added": "bypassSecurityTrust\\w*\\(", "msg": "bypassSecurityTrust* (luật 6)" },
+    { "level": "WARN", "files": "^docker/mysql/init/", "newFilesOnly": true, "msg": "file mới trong docker/mysql/init/ — script migration phải nằm ở docker/mysql/migrations/ (luật 1)" },
+    { "level": "WARN", "files": "^backend/src/main/.*\\.java$", "added": "\\.equals\\(.*(BigDecimal|amount|Amount|fee|Fee|price|Price|total|Total|salary|Salary)|(BigDecimal|amount|Amount|fee|Fee|price|Price|total|Total|salary|Salary).*\\.equals\\(", "msg": "có thể so sánh tiền bằng equals — BigDecimal phải dùng compareTo (luật 6)" },
+    { "level": "WARN", "files": "^backend/src/main/.*\\.java$", "added": "(createNativeQuery|createQuery|jdbc\\w*\\.(query|update|queryFor\\w+|execute))\\s*\\(.*\"\\s*\\+|\"\\s*(SELECT|UPDATE|DELETE|INSERT)\\b[^\"]*\"\\s*\\+\\s*\\w", "flags": "i", "msg": "SQL ghép chuỗi — dùng tham số :param / ? (luật 6)" }
+  ],
+  "rulesModule": "scripts/devflow-rules.mjs",
+  "remoteSetup": [
+    "npm install --no-audit --no-fund",
+    "cd frontend && npm install --no-audit --no-fund",
+    "cd backend && sh mvnw -B -q dependency:go-offline"
+  ]
+}
