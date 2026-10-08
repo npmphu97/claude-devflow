@@ -4,7 +4,15 @@
 mọi dự án dev local: mỗi task một worktree, gate local thay CI, `dev`/`main` chỉ fast-forward, tag
 phiên bản tự sinh, verifier độc lập, ghi chú handoff, số liệu retro, hook chặn lệnh nguy hiểm.
 
-## Cài đặt (một lần trên máy)
+## Cài đặt (chỉ local, không đưa lên đâu cả)
+
+Cần: git, Node ≥ 18.
+
+"Marketplace" ở đây chỉ là **thư mục này trên máy**: `.claude-plugin/marketplace.json` là danh mục để
+Claude Code biết trong thư mục có plugin nào. Không có gì được upload hay công khai, repo cũng không
+cần remote.
+
+### Cách 1: cài cố định từ thư mục local (nên dùng)
 
 Trong Claude Code:
 
@@ -13,10 +21,30 @@ Trong Claude Code:
 /plugin install devflow@devflow-local
 ```
 
-Sau khi sửa plugin: `/plugin marketplace update devflow-local`, rồi trong từng dự án `/devflow:init`
-(chế độ cập nhật) để làm mới `scripts/devflow/`.
+- Plugin có sẵn trong mọi session, mọi dự án. Hook chỉ chạy ở repo có `.devflow.json`.
+- Sau khi sửa plugin: `/plugin marketplace update devflow-local`, rồi khởi động lại Claude Code.
+- Gỡ: `/plugin uninstall devflow@devflow-local`.
 
-Cần: git, Node ≥ 18.
+### Cách 2: nạp cho từng lần chạy, không cài gì
+
+```
+claude --plugin-dir C:\Users\npmph\Development\Projects\claude-devflow\plugins\devflow
+```
+
+- Chỉ có hiệu lực trong session đó; lần sau phải gõ lại cờ này.
+- Hợp khi đang sửa plugin và muốn thử ngay.
+
+### Không khuyên dùng: copy tay vào `~/.claude/`
+
+Copy từng skill vào `~/.claude/skills/` và khai báo hook trong `~/.claude/settings.json` cũng chạy được,
+nhưng phải tự nối đường dẫn tới hook / script, agent không được nạp theo, và mỗi lần cập nhật lại phải
+copy tay.
+
+### Sau khi cài
+
+Cách nào cũng dùng giống nhau: vào thư mục dự án, chạy `/devflow:init` một lần (xem mục dưới), rồi làm
+việc bằng `/devflow:dev-loop`, `npm run land`... Plugin có bản mới → trong từng dự án chạy lại
+`/devflow:init` (chế độ cập nhật) để làm mới `scripts/devflow/`.
 
 ## Gắn vào một dự án
 
