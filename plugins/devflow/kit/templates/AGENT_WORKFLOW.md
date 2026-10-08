@@ -1,0 +1,78 @@
+# Workflow agent loop (devflow)
+
+Mỗi thay đổi đi qua đúng các bước một team IT chuẩn vẫn làm: tiếp nhận → phân tích → lập kế hoạch →
+code → kiểm thử → review → land (gate) → promote → rút kinh nghiệm. Agent đổi "mũ" theo từng pha;
+mỗi pha có đầu ra rõ ràng và cổng kiểm soát trước khi sang pha sau.
+
+> **Repo chạy local:** không PR, không CI; remote chỉ giữ bản sao lưu `dev`/`main`/tag do script tự
+> push. Nhánh task (không push) vào `dev` bằng fast-forward qua `npm run land` (gate local thay CI),
+> `dev` vào `main` bằng fast-forward qua `npm run promote` (tạo tag `vX.Y.Z`).
+
+## Thành phần
+
+| Thành phần | Vai trò |
+|---|---|
+| `CLAUDE.md` | Sổ tay dự án: kiến trúc, lệnh build/test, luật cứng, bài học |
+| `.devflow.json` | Cấu hình máy: tên nhánh, remote sao lưu, vùng gate (lint/build/test), luật cứng dò bằng regex |
+| `scripts/devflow/*.mjs` | Phần máy móc, chạy không cần AI: luồng git, gate, hard-rules, retro, handoff |
+| Plugin `devflow` | Skill `dev-loop`, `ship`, `steward`, `handoff`, `retro`, `init`; agent `verifier`, `ba`; hook chặn lệnh nguy hiểm + in ghi chú handoff |
+
+## Các pha
+
+| Pha | Vai trò | Agent làm gì | Gate qua pha |
+|---|---|---|---|
+| 0. Intake | PO / BA | Đọc yêu cầu, hỏi lại chỗ mơ hồ, viết acceptance criteria "Khi … thì …" | Có tiêu chí rõ |
+| 0.5. Phân loại | Tech lead | OpenSpec hay làm thẳng (tiêu chí trong CLAUDE.md) | Nói rõ kết quả + lý do |
+| 1. Analyze | BA + Tech lead | Explore code liên quan, test đang có, nơi dùng chung | Biết file nào bị ảnh hưởng |
+| 2. Plan | Tech lead | Bước + cách kiểm, schema, transaction, dữ liệu cũ, ma trận test, rollback | **Người duyệt** |
+| 3. Implement | Developer | Worktree riêng, commit nhỏ Conventional Commits | Compile sạch |
+| 4. Verify | QA | Test liên quan, rồi `npm run check` | Gate xanh |
+| 5. Self-review | Reviewer | Subagent `verifier` (context mới), `/code-review`, `/security-review` khi cần | verifier PASS |
+| 6. Báo cáo | Developer | `npm run ship`, báo cáo + bằng chứng thật trong chat | — |
+| 7. Review | Người | Đọc `git diff dev...<nhánh>`; agent sửa theo góp ý (skill `steward`) | Người bảo land |
+| 8. Land | Dev (khi được yêu cầu) | `npm run land`: rebase nếu cần, gate, fast-forward `dev`, push sao lưu | Gate xanh |
+| 9. Promote | Release manager (người) | `npm run promote`: fast-forward `main`, tag `vX.Y.Z` | Deploy theo checklist |
+| 10. Retro | Cả team | `/devflow:retro` → hook / luật gate / bài học CLAUDE.md | — |
+
+**Nguyên tắc vàng:** agent tự động hoá pha 1, 3, 4, 5, 6. Pha 0, 2 (duyệt plan), 7 (review), 8–9
+(land/promote) và mọi thao tác trên **dữ liệu production** luôn có người quyết định.
+
+## Luật dừng (circuit breaker)
+
+1. Sửa cùng một lỗi 2 lần mà test vẫn đỏ → dừng, quay lại pha 2, báo người dùng root cause đã biết / chưa biết.
+2. Không bao giờ skip/disable test hay xoá assertion để cho xanh.
+3. Không "fix" bằng `try/catch` nuốt lỗi; tìm root cause và ghi vào message commit.
+4. Chạm dữ liệu production (data-tool, SQL tay) → luôn dừng chờ người duyệt.
+5. Task phình quá phạm vi → dừng, đề xuất tách task mới.
+
+## Thang tin cậy (autonomy slider)
+
+Quyền tự chủ của agent tăng theo **bằng chứng**, không theo cảm giác.
+
+| Nấc | Agent được làm | Người làm | Điều kiện lên nấc |
+|---|---|---|---|
+| 1. Kèm sát | Plan, code, test local, commit, báo cáo | Duyệt plan, đọc diff, bảo land | Gate chặn được lỗi lint/build/unit test |
+| 2. Tự kiểm chứng | Như 1 + chạy app thật, dán bằng chứng | Đọc bằng chứng thay vì chạy lại | Có seed dữ liệu cho app local |
+| 3. Việc nhỏ tự chạy | Task không cần OpenSpec chạy không kèm | Đọc diff + báo cáo | 4 tuần tỉ lệ fix-bám-feat giảm (`/devflow:retro`) |
+| 4. Auto-land có điều kiện | Tự land docs/test/UI nhỏ khi gate + verifier PASS | Soát trước khi promote | Nấc 3 ổn định nhiều tháng |
+
+Việc đụng dữ liệu production, schema, phân quyền, tiền: **luôn ở nấc 1**.
+
+## Dùng hằng ngày
+
+| Tình huống | Lệnh |
+|---|---|
+| Bắt đầu task | `/devflow:dev-loop <mô tả>` |
+| Tính năng mới cần làm rõ yêu cầu | subagent `devflow:ba` hoặc `/opsx:propose` |
+| Kiểm trước khi land | `npm run check`, subagent `devflow:verifier` |
+| Đưa nhánh vào `dev` / `dev` lên `main` | "land" / "promote" |
+| Dừng giữa chừng / tiếp tục | `/devflow:handoff` / `/devflow:handoff resume` |
+| Hằng tuần, sau sự cố | `/devflow:retro` |
+
+Chạy song song nhiều task: mỗi task một session + một worktree + một nhánh; không để hai agent cùng
+sửa một module một lúc.
+
+## Chỉ số theo dõi
+- Tỉ lệ commit `fix` bám một `feat` cùng scope trong 7 ngày (mục tiêu: giảm dần).
+- Tỉ lệ dòng test / dòng code thay đổi (mục tiêu ≥ 20 %).
+- Số lần test đỏ trên `dev`/`main` (mục tiêu: 0 — đã chặn ở gate của `land`).
