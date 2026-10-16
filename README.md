@@ -17,7 +17,7 @@ cần remote.
 Trong Claude Code:
 
 ```
-/plugin marketplace add C:\Users\npmph\Development\Projects\claude-devflow
+/plugin marketplace add C:\Users\npmph\Development\Projects\pnptech\claude-devflow
 /plugin install devflow@devflow-local
 ```
 
@@ -28,7 +28,7 @@ Trong Claude Code:
 ### Cách 2: nạp cho từng lần chạy, không cài gì
 
 ```
-claude --plugin-dir C:\Users\npmph\Development\Projects\claude-devflow\plugins\devflow
+claude --plugin-dir C:\Users\npmph\Development\Projects\pnptech\claude-devflow\plugins\devflow
 ```
 
 - Chỉ có hiệu lực trong session đó; lần sau phải gõ lại cờ này.
@@ -55,10 +55,12 @@ quyết định, rồi:
 |---|---|
 | `scripts/devflow/*.mjs` | Script vendor vào dự án (gate chạy cả khi không có Claude, khoá version theo dự án) |
 | `.devflow.json` | Cấu hình: nhánh, remote sao lưu, vùng gate (dò từ `package.json`, `pom.xml`, Gradle, Python, Go, Rust, .NET), luật cứng |
-| `package.json` | `npm run task / ship / check / land / promote / sync / backup / untask / hard-rules / retro / handoff` |
+| `package.json` | `npm run task / ship / check / land / promote / sync / backup / cloud-push / untask / worktrees:clean / hard-rules / retro / handoff / queue / status / doctor / devflow-test` |
 | `CLAUDE.md` | Section quy trình (OpenSpec khi nào, bảng ví dụ, thiết kế test, luật cứng, bài học) giữa `<!-- devflow:start/end -->` |
 | `docs/AGENT_WORKFLOW.md` | Các pha, circuit breaker, thang tin cậy |
-| `.gitignore` | `.claude/worktrees/`; tự re-include `CLAUDE.md`, `.claude/`, `openspec/` nếu global excludesFile đang ignore chúng |
+| `.claude/task-queue.md` | Hàng đợi việc chung (skill `/devflow:queue`): In progress / Ready / Waiting / Done. Ở main checkout, gitignore — mọi worktree dùng chung một bản |
+| `.claude/settings.json` | `plansDirectory` = `.claude/plans` (plan nằm trong repo, không ở `~/.claude/plans/`) + `permissions.allow` cho các lệnh local an toàn (`npm run check / ship / task / queue / status ...`; không gồm `land` / `promote`). Có file rồi → chỉ in gợi ý |
+| `.gitignore` | `.claude/worktrees/`, `.claude/task-queue.md*`; tự re-include `CLAUDE.md`, `.claude/`, `openspec/` nếu global excludesFile đang ignore chúng |
 | `commitlint.config.cjs`, `.husky/commit-msg` | Conventional Commits |
 | nhánh `dev` | Tạo từ `main` khi chọn `--create-dev` |
 
@@ -70,14 +72,15 @@ Không ghi đè file đã có. OpenSpec là tuỳ chọn (`openspec init --tools
 |---|---|---|
 | Skill | `/devflow:init` | Gắn / cập nhật devflow trong repo |
 | Skill | `/devflow:dev-loop` | Một task qua đủ pha: intake → phân loại → analyze → plan (người duyệt) → implement → verify → self-review → land |
+| Skill | `/devflow:hot-fix-dev` | Fix nhỏ làm thẳng trên checkout `dev` (không worktree) qua `ship --verify --land`; gate vẫn chạy, file lạ của session khác không bị đụng |
 | Skill | `devflow:ship` | Luồng git local qua `scripts/devflow/flow.mjs` |
 | Skill | `devflow:steward` | Gate đỏ, review, những việc không bao giờ làm |
 | Skill | `/devflow:handoff` | Ghi chú resume ≤ 30 dòng trên nhánh |
 | Skill | `/devflow:retro` | Số liệu từ git + đề xuất luật gate / bài học |
+| Skill | `/devflow:queue` | Hàng đợi việc chung (`.claude/task-queue.md` ở main checkout): thêm task, task ready (hết blocker), claim = In progress + nhánh/worktree (`start --branch`), park / `unblock`, done khi land |
 | Agent | `devflow:verifier` | Kiểm diff so với plan trong context mới, kết luận PASS/FAIL |
-| Agent | `devflow:ba` | Hỏi yêu cầu, viết spec (OpenSpec hoặc plan) — không code |
-| Hook | SessionStart | In ghi chú handoff của nhánh; chạy `remoteSetup` trong cloud session |
-| Hook | PreToolUse (Bash, PowerShell) | Chặn skip test, `git push` tay, `gh pr/release/run`, dời `dev`/`main`, SQL phá dữ liệu, `rm -rf /` |
+| Hook | SessionStart | In ghi chú handoff của nhánh + tóm tắt queue (task của nhánh, số task ready, task kế); chạy `remoteSetup` trong cloud session và fetch `dev` về local (để `check` có nhánh mà so) |
+| Hook | PreToolUse (Bash, PowerShell) | Chặn skip test, `git push` tay, `gh pr/release/run`, dời / merge / reset `--hard` lên `dev`/`main`, SQL phá dữ liệu, `rm -rf /` |
 
 Hook chỉ hoạt động trong repo có `.devflow.json` — cài plugin không đổi hành vi ở dự án khác.
 
@@ -91,6 +94,29 @@ feat/… fix/… chore/…  ──land (gate + ff)──►  dev  ──promote 
 
 Gate của `land` / `check`: commitlint `dev..HEAD` → `hard-rules --strict` → với mỗi vùng có file đổi:
 ESLint từng file (lỗi hoặc tăng cảnh báo so với `dev` → chặn) rồi các lệnh của vùng.
+
+## Chạy song song nhiều task
+
+Mỗi task: một session + một nhánh + một worktree. Claim bằng `npm run queue -- start T-001 --branch feat/x-y`
+(đánh dấu In progress và tạo worktree; claim trùng bị từ chối). `npm run status` in mỗi worktree task: nhánh,
+`+ahead/-behind` so với `dev`, số file chưa commit, có handoff không, task queue tương ứng, rồi 3 task ready đầu.
+Xong: `land → queue done → (/opsx:archive) → untask`.
+
+## Dọn worktree kẹt
+
+`npm run untask` là đường chính để gỡ worktree sau khi land. Khi nó không được (thư mục còn sót sau
+"Permission denied", ExitWorktree "No-op" vì worktree từ session cũ, thư mục git không còn biết),
+dùng `npm run worktrees:clean` — chạy ở đâu cũng được, script tự về main checkout:
+
+| Lệnh | Tác dụng |
+|---|---|
+| `npm run worktrees:clean` | Chỉ liệt kê mọi worktree / thư mục trong `.claude/worktrees`, đánh dấu ✔ an toàn hay ! rủi ro. Không đổi gì. |
+| `npm run worktrees:clean -- --yes` | Xoá các mục an toàn: nhánh đã vào nhánh tích hợp và cây sạch, thư mục mồ côi, đăng ký worktree mà thư mục đã mất. Xoá luôn nhánh đã vào. |
+| `... -- --yes <tên>` | Chỉ xử lý mục có tên nhánh / tên thư mục đó. |
+| `... -- --yes --force` | Xoá cả mục rủi ro (còn thay đổi chưa commit hoặc nhánh chưa vào) — **mất việc chưa commit**. |
+
+Script gỡ các junction/symlink (`node_modules`, `.husky/_`) trước khi xoá nên không xoá nhầm sang
+main checkout. Đừng đứng terminal/IDE bên trong thư mục đang xoá (Windows khoá thư mục).
 
 ## `.devflow.json`
 
