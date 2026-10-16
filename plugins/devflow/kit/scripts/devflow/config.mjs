@@ -3,7 +3,7 @@
 // .devflow.json; the scripts themselves stay identical across projects.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 export const CONFIG_FILE = '.devflow.json';
 
@@ -70,6 +70,12 @@ function merge(base, over) {
 export function repoRoot(cwd = process.cwd()) {
   const r = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' });
   return r.status === 0 ? r.stdout.trim() : null;
+}
+
+/** The main checkout (shared by every task worktree), also when `cwd` is inside a linked worktree. */
+export function mainCheckout(cwd = process.cwd()) {
+  const r = spawnSync('git', ['rev-parse', '--git-common-dir'], { cwd, encoding: 'utf8' });
+  return r.status === 0 ? resolve(cwd, r.stdout.trim(), '..') : null; // <main>/.git/.. = main checkout
 }
 
 /** Config of the checkout at `root`; `found` tells whether the repo opted in with a .devflow.json. */
