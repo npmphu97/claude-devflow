@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Local git flow of a devflow repo — worktree per task, commit only the task's files, gate + fast-forward the task branch into dev, fast-forward dev into main with a version tag, auto-push dev/main/tags to the backup remote — all through scripts/devflow/flow.mjs. No PR, no CI. Use when starting a code task (dev-loop phase 3) and for every git step after the code is done, or when the user says "ship", "commit", "land", "merge", "promote", "release", "lên main".
+description: Local git flow of a devflow repo — worktree per task, commit only the task's files, gate + fast-forward the task branch into dev, fast-forward dev into main with a version tag, auto-push dev/main/tags to the backup remote — all through scripts/devflow/flow.mjs. No PR, no CI. Use for every git step after the code is done (dev-loop phase 3 runs `npm run task` directly without this skill), or when the user says "ship", "commit", "land", "merge", "promote", "release", "lên main".
 ---
 
 # ship
@@ -32,29 +32,39 @@ Vì vậy mỗi task code làm trong worktree riêng.
    Không dùng `git worktree remove --force` hay `ExitWorktree(remove)`: phải gỡ link trước, `untask`
    làm việc đó và từ chối nếu worktree còn thay đổi chưa commit.
 
-`ship` ở repo chính mà còn file thay đổi khác ngoài danh sách → dừng (có thể là của session khác).
-Chỉ người dùng tự commit tay mới dùng `--shared-ok`; agent không tự thêm cờ này.
+`ship` ở repo chính, đang ở `dev`, mà còn file thay đổi khác ngoài danh sách (có thể của session khác)
+→ tự tách: chép các file đã liệt kê vào worktree tạm, commit (và `--land`) từ đó, trả các file đó về
+HEAD ở checkout chính; file khác không bị đụng. Không hỗ trợ `--promote` trong chế độ này. Ở nhánh
+khác `dev` mà còn file lạ → dừng. Chỉ người dùng tự commit tay mới dùng `--shared-ok`; agent không
+tự thêm cờ này.
 
 ## Lệnh
 
 | Lệnh | Làm gì |
 |---|---|
 | `npm run task -- <type>/<scope>-<mô-tả>` | Tạo worktree cho task từ `dev`. |
-| `npm run ship -- (-m "<header>" [-m "<body>"]... \| -F msg.txt) [--verify] [--land] [--promote] <file>...` | Commit **chỉ** các file liệt kê trên nhánh hiện tại. Đang ở `dev` → tạo nhánh từ header trước. Ở `main` → từ chối. |
+| `npm run ship -- (-m "<header>" [-m "<body>"]... \| -F msg.txt) [--verify] [--land] [--promote] [--no-cache] <file>...` | Commit **chỉ** các file liệt kê trên nhánh hiện tại. Đang ở `dev` → tạo nhánh từ header trước. Ở `main` → từ chối. |
 | `npm run check` | Chạy đúng gate của `land` (kể cả thay đổi chưa commit), không commit, không merge. |
 | `npm run land` | Từ nhánh task: `dev` đã đi trước → tự rebase (conflict → abort, dừng); gate; fast-forward `dev`; push `dev` lên remote. |
 | `npm run promote` | Fast-forward `main` lên `dev`; có commit `feat`/`fix`/`perf`/`revert`/breaking từ tag trước → annotated tag `vX.Y.Z` (release notes trong tag); push `dev`, `main`, tag. |
-| `npm run sync` | Xoá nhánh local mà `dev` đã chứa hết commit (bỏ qua nhánh đang checkout ở worktree). |
+| `npm run sync` | Xoá nhánh local mà `dev` đã chứa hết commit (bỏ qua nhánh đang checkout ở worktree); in danh sách nhánh `ccr-*` đã land còn trên remote để người dùng xoá tay. |
+| `npm run cloud-push` | Chỉ phiên cloud: push nhánh `ccr-*` hiện tại lên remote làm backup (chạy `hard-rules` trước, không force, từ chối `dev`/`main`/nhánh khác). Không land. |
 | `npm run backup` | Push `dev`, `main`, mọi tag — chạy lại khi lần push tự động trước bị lỗi. |
 | `npm run untask -- <nhánh>` | Gỡ worktree của task an toàn (từ repo chính); xoá nhánh nếu `dev` đã chứa nó. |
+| `npm run status` | Ai đang làm gì: mỗi worktree task → nhánh, +ahead/-behind so với `dev`, số file chưa commit, có handoff không, task queue tương ứng; claim mồ côi; 3 task ready đầu. Chỉ đọc. |
+| `npm run doctor` | Kiểm tra repo sẵn sàng cho vòng devflow: nhánh `dev`/`main`, git identity, vùng gate (đường dẫn, eslint, lệnh), commitlint, hook `.husky/commit-msg` có executable. |
+| `npm run devflow-test` | Tự test các script của plugin (`node --test`) — guard rules, vòng task→promote, hard-rules, doctor. |
 
 **Gate của `land`** (thay CI, chạy trên `dev...HEAD`):
 - commitlint mọi commit `dev..HEAD` (khi đã cài `@commitlint/cli`).
 - `scripts/devflow/hard-rules.mjs --strict`: luật cứng trên dòng thêm / xoá so với `dev`. ERROR chặn
   (disable / focus test, sửa version tay, luật ERROR của `.devflow.json`); WARN chỉ in ra để agent /
   verifier đọc (xoá test / assertion, secret viết cứng, luật WARN của dự án).
-- Mỗi vùng trong `areas` của `.devflow.json` có file đổi: ESLint từng file (có lỗi hoặc số cảnh báo
-  tăng so với `dev` → dừng), rồi các lệnh của vùng (build, unit test...).
+- Mỗi vùng trong `areas` của `.devflow.json` có file đổi (các vùng chạy **song song**): ESLint các file
+  trong một lần chạy (có lỗi hoặc số cảnh báo tăng so với `dev` → dừng; bản `dev` chỉ được đọc cho file
+  đang có cảnh báo), rồi các lệnh của vùng (build, unit test...).
+- Gate đã xanh cho đúng HEAD này + `dev` này trên cây sạch → bỏ qua (cache trong `.git/gate-passed`);
+  `--no-cache` để chạy lại.
 - Đỏ → không merge gì, nhánh giữ nguyên (đã rebase thì vẫn ở trạng thái đã rebase).
 
 `ship --verify` chạy phần lint / lệnh vùng trên các file sắp commit, trước khi commit.
@@ -78,6 +88,9 @@ Version: tag do `promote` tạo là phiên bản thật. Bump theo Conventional 
 
 ## Lỗi thường gặp
 - `main checkout has other uncommitted changes`: chuyển sang worktree (`npm run task`).
+- Worktree kẹt không gỡ được bằng `untask` (thư mục sót sau "Permission denied", ExitWorktree "No-op"
+  vì worktree từ session cũ): `npm run worktrees:clean` xem trước (dry-run), rồi
+  `npm run worktrees:clean -- --yes` xoá mục an toàn. Đừng đứng terminal/IDE trong thư mục đang xoá.
 - `no changes in <file>`: sai đường dẫn hoặc đã commit rồi.
 - `no local dev branch`: tạo một lần `git branch dev main` (hỏi người dùng trước).
 - `rebase of <nhánh> onto dev conflicts`: `git rebase dev`, sửa conflict, `git rebase --continue`, `land` lại.

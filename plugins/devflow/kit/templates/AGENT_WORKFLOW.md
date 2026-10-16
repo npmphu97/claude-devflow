@@ -15,19 +15,20 @@ mỗi pha có đầu ra rõ ràng và cổng kiểm soát trước khi sang pha 
 | `CLAUDE.md` | Sổ tay dự án: kiến trúc, lệnh build/test, luật cứng, bài học |
 | `.devflow.json` | Cấu hình máy: tên nhánh, remote sao lưu, vùng gate (lint/build/test), luật cứng dò bằng regex |
 | `scripts/devflow/*.mjs` | Phần máy móc, chạy không cần AI: luồng git, gate, hard-rules, retro, handoff |
-| Plugin `devflow` | Skill `dev-loop`, `ship`, `steward`, `handoff`, `retro`, `init`; agent `verifier`, `ba`; hook chặn lệnh nguy hiểm + in ghi chú handoff |
+| `.claude/task-queue.md` | Hàng đợi việc chung ở main checkout (không commit): làm gì, việc nào ready, việc nào đang chờ |
+| Plugin `devflow` | Skill `dev-loop`, `hot-fix-dev`, `ship`, `steward`, `queue`, `handoff`, `retro`, `init`; agent `verifier`; hook chặn lệnh nguy hiểm + in ghi chú handoff và tóm tắt queue |
 
 ## Các pha
 
 | Pha | Vai trò | Agent làm gì | Gate qua pha |
 |---|---|---|---|
 | 0. Intake | PO / BA | Đọc yêu cầu, hỏi lại chỗ mơ hồ, viết acceptance criteria "Khi … thì …" | Có tiêu chí rõ |
-| 0.5. Phân loại | Tech lead | OpenSpec hay làm thẳng (tiêu chí trong CLAUDE.md) | Nói rõ kết quả + lý do |
+| 0.5. Phân loại | Tech lead | OpenSpec hay làm thẳng (tiêu chí trong CLAUDE.md); OpenSpec: `/opsx:apply` và `/opsx:archive` ở **phiên mới** | Nói rõ kết quả + lý do |
 | 1. Analyze | BA + Tech lead | Explore code liên quan, test đang có, nơi dùng chung | Biết file nào bị ảnh hưởng |
 | 2. Plan | Tech lead | Bước + cách kiểm, schema, transaction, dữ liệu cũ, ma trận test, rollback | **Người duyệt** |
-| 3. Implement | Developer | Worktree riêng, commit nhỏ Conventional Commits | Compile sạch |
-| 4. Verify | QA | Test liên quan, rồi `npm run check` | Gate xanh |
-| 5. Self-review | Reviewer | Subagent `verifier` (context mới), `/code-review`, `/security-review` khi cần | verifier PASS |
+| 3. Implement | Developer | Worktree riêng; task nhỏ lưu plan đã duyệt vào `.claude/plans/<nhánh>.md` cho verifier; commit nhỏ Conventional Commits | Compile sạch |
+| 4. Verify | QA | Test liên quan, `npm run check`, chạy app thật khi đổi hành vi người dùng thấy | Gate xanh + bằng chứng |
+| 5. Self-review | Reviewer | Subagent `verifier` (context mới), `/simplify`, `/code-review`, `/security-review` khi cần | verifier PASS (miễn khi chỉ đổi `.claude/`, `docs/`, `.md`) |
 | 6. Báo cáo | Developer | `npm run ship`, báo cáo + bằng chứng thật trong chat | — |
 | 7. Review | Người | Đọc `git diff dev...<nhánh>`; agent sửa theo góp ý (skill `steward`) | Người bảo land |
 | 8. Land | Dev (khi được yêu cầu) | `npm run land`: rebase nếu cần, gate, fast-forward `dev`, push sao lưu | Gate xanh |
@@ -63,14 +64,20 @@ Việc đụng dữ liệu production, schema, phân quyền, tiền: **luôn �
 | Tình huống | Lệnh |
 |---|---|
 | Bắt đầu task | `/devflow:dev-loop <mô tả>` |
-| Tính năng mới cần làm rõ yêu cầu | subagent `devflow:ba` hoặc `/opsx:propose` |
+| Lấy việc tiếp theo từ queue | `npm run queue -- next`, rồi `npm run queue -- start <id> --branch feat/<scope>-<mô-tả>` (claim + worktree) |
+| Ai đang làm gì | `npm run status` |
+| Xong một task | `npm run land` → `npm run queue -- done <id>` → (`/opsx:archive`, ở phiên mới) → `npm run untask -- <nhánh>` |
+| Tính năng mới cần làm rõ yêu cầu | `/opsx:explore` rồi `/opsx:propose` |
+| Fix nhỏ làm thẳng trên `dev` | `/devflow:hot-fix-dev` |
+| Phiên cloud (nhánh `ccr-*`) xong việc | `npm run cloud-push` (chỉ backup, không land) |
 | Kiểm trước khi land | `npm run check`, subagent `devflow:verifier` |
 | Đưa nhánh vào `dev` / `dev` lên `main` | "land" / "promote" |
 | Dừng giữa chừng / tiếp tục | `/devflow:handoff` / `/devflow:handoff resume` |
 | Hằng tuần, sau sự cố | `/devflow:retro` |
 
 Chạy song song nhiều task: mỗi task một session + một worktree + một nhánh; không để hai agent cùng
-sửa một module một lúc.
+sửa một module một lúc. Claim qua `queue start --branch` để hai session không nhận trùng; `npm run status`
+xem toàn cảnh. Một session đi lạc thì bỏ worktree đó làm lại từ plan, rẻ hơn cố cứu.
 
 ## Chỉ số theo dõi
 - Tỉ lệ commit `fix` bám một `feat` cùng scope trong 7 ngày (mục tiêu: giảm dần).
