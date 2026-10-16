@@ -8,14 +8,16 @@
 //   sync     delete local branches already contained in the integration branch
 //   backup   push integration/release branches + tags to the backup remote
 //   untask   remove a task worktree safely
+//   status   who works on what: task worktrees (ahead/behind, dirty, handoff) + queue, read-only
 // The local clone is the source of truth: no PR, no CI. Integration/release branches only move by
 // fast-forward and are pushed to the remote as a backup; task branches are never pushed.
-import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdtempSync, symlinkSync, lstatSync, unlinkSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync, mkdtempSync, symlinkSync, lstatSync, unlinkSync, statSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { repoRoot, loadConfig, commandHint } from './config.mjs';
+import { repoRoot, mainCheckout, loadConfig, commandHint } from './config.mjs';
+import { queueFile, load as loadQueue, itemsOf, readyItems, describe as describeTask } from './queue-lib.mjs';
 
 const REPO_ROOT = repoRoot();
 const cfg = loadConfig(REPO_ROOT);
@@ -148,7 +150,7 @@ function task(opts) {
     die(`usage: ${hint('task')} -- <type>/<scope>-<desc>   e.g. feat/billing-export-csv`);
   }
   requireBranch(DEV);
-  const mainRoot = git(['worktree', 'list', '--porcelain']).split('\n')[0].slice(9); // first entry = main checkout
+  const mainRoot = mainCheckout(REPO_ROOT);
   const path = join(mainRoot, ...cfg.worktreeDir.split('/'), branch.replace(/\//g, '-'));
   if (existsSync(path)) die(`${path} already exists — enter it instead.`);
   if (branchExists(branch)) die(`branch ${branch} already exists — use: git worktree add "${path}" ${branch}`);
@@ -200,22 +202,50 @@ function runLocal(label, cmd, args, cwd, opts = {}) {
   if (r.error || r.status !== 0) die(`gate failed at: ${label}. Nothing was committed/merged.`);
 }
 
-/** ESLint errors+warnings of one file: current content, or its version at `baseRef`
- * (read from `baseFile` when the file was moved). */
-function eslintCounts(eslintCwd, file, baseRef, baseFile = file) {
-  const cwd = join(REPO_ROOT, eslintCwd);
-  const rel = relative(cwd, join(REPO_ROOT, file)).replace(/\\/g, '/');
-  const base = baseRef ? git(['show', `${baseRef}:${baseFile}`], { allowFail: true }) : null;
-  if (baseRef && base === null) return { errors: 0, warnings: 0 }; // new file
-  const bin = [join(cwd, 'node_modules', 'eslint', 'bin', 'eslint.js'), join(REPO_ROOT, 'node_modules', 'eslint', 'bin', 'eslint.js')]
+/** Async run with output collected (not inherited), so gate areas can run side by side. */
+function runCapture(cmd, args, { cwd, input, ...opts } = {}) {
+  return new Promise(done => {
+    const p = spawn(cmd, args, { cwd, ...opts });
+    let stdout = '';
+    let stderr = '';
+    p.stdout.on('data', d => (stdout += d));
+    p.stderr.on('data', d => (stderr += d));
+    p.on('error', e => done({ status: -1, stdout, stderr: stderr + e.message }));
+    p.on('close', status => done({ status, stdout, stderr }));
+    p.stdin.on('error', () => {});
+    p.stdin.end(input);
+  });
+}
+
+const sumCounts = results => results.reduce(
+  (t, f) => ({ errors: t.errors + f.errorCount, warnings: t.warnings + f.warningCount }), { errors: 0, warnings: 0 });
+
+function eslintBin(eslintCwd) {
+  const bin = [join(REPO_ROOT, eslintCwd, 'node_modules', 'eslint', 'bin', 'eslint.js'), join(REPO_ROOT, 'node_modules', 'eslint', 'bin', 'eslint.js')]
     .find(existsSync);
   if (!bin) die(`eslint not installed in ${eslintCwd}/node_modules (needed by the gate's eslint check).`);
-  const args = [bin, '-f', 'json'];
-  const r = spawnSync(process.execPath, baseRef ? [...args, '--stdin', '--stdin-filename', rel] : [...args, rel],
-    { cwd, encoding: 'utf8', input: base ?? undefined, maxBuffer: 64 * 1024 * 1024 });
+  return bin;
+}
+
+/** ESLint errors+warnings of the current content of every given file, in ONE eslint run. */
+async function eslintCurrent(eslintCwd, files) {
+  const cwd = join(REPO_ROOT, eslintCwd);
+  const rels = files.map(f => relative(cwd, join(REPO_ROOT, f)).replace(/\\/g, '/'));
+  const r = await runCapture(process.execPath, [eslintBin(eslintCwd), '-f', 'json', ...rels], { cwd });
+  if (!r.stdout?.trim().startsWith('[')) die(`eslint could not run:\n${r.stderr}`);
+  const byFile = new Map(JSON.parse(r.stdout).map(res => [relative(cwd, res.filePath).replace(/\\/g, '/'), res]));
+  return new Map(files.map((f, i) => [f, sumCounts(byFile.has(rels[i]) ? [byFile.get(rels[i])] : [])]));
+}
+
+/** ESLint errors+warnings of one file as it is at `baseRef` (read from `baseFile` when the file was moved). */
+async function eslintBase(eslintCwd, file, baseRef, baseFile = file) {
+  const cwd = join(REPO_ROOT, eslintCwd);
+  const rel = relative(cwd, join(REPO_ROOT, file)).replace(/\\/g, '/');
+  const base = git(['show', `${baseRef}:${baseFile}`], { allowFail: true });
+  if (base === null) return { errors: 0, warnings: 0 }; // new file
+  const r = await runCapture(process.execPath, [eslintBin(eslintCwd), '-f', 'json', '--stdin', '--stdin-filename', rel], { cwd, input: base });
   if (!r.stdout?.trim().startsWith('[')) die(`eslint could not run on ${file}:\n${r.stderr}`);
-  return JSON.parse(r.stdout).reduce(
-    (t, f) => ({ errors: t.errors + f.errorCount, warnings: t.warnings + f.warningCount }), { errors: 0, warnings: 0 });
+  return sumCounts(JSON.parse(r.stdout));
 }
 
 /** Files renamed vs the integration branch (committed or not): new path → old path. */
@@ -228,34 +258,49 @@ function renamedFromDev() {
   return renamed;
 }
 
-/** Per area of .devflow.json touched by `files`: ESLint delta check (no errors, no new warnings vs the
- * integration branch), then the area's commands (build, unit tests, ...). */
-function verify(files) {
+/** One gate area: ESLint delta check (no errors, no new warnings vs the integration branch; the base
+ * version is read only for files that have warnings), then the area's commands. Output is returned,
+ * not printed, so areas can run in parallel. */
+async function verifyArea(area, areaFiles) {
+  let out = `\n▶ verify ${area.name}\n`;
+  const fail = msg => ({ ok: false, out: out + msg });
+  if (area.eslint) {
+    const { cwd = '.', extensions = ['.ts', '.tsx', '.js', '.jsx', '.vue', '.html'] } = area.eslint;
+    const prefix = cwd === '.' ? '' : `${cwd.replace(/\/$/, '')}/`;
+    const renamed = renamedFromDev();
+    const lintable = areaFiles.filter(f => f.startsWith(prefix) && extensions.some(e => f.endsWith(e)) && existsSync(join(REPO_ROOT, f)));
+    const counts = lintable.length ? await eslintCurrent(cwd, lintable) : new Map();
+    const befores = new Map(await Promise.all(lintable.filter(f => counts.get(f).warnings > 0)
+      .map(async f => [f, await eslintBase(cwd, f, DEV, renamed.get(f))])));
+    for (const f of lintable) {
+      const now = counts.get(f);
+      const from = renamed.has(f) ? ` at ${renamed.get(f)}` : '';
+      const base = befores.has(f) ? befores.get(f).warnings : 0; // no warnings now → cannot have increased
+      out += `  ${f}: ${now.errors} error(s), ${now.warnings} warning(s) (${DEV}${from}: ${befores.has(f) ? base : 'not read'})\n`;
+      if (now.errors > 0) return fail(`verify: ESLint errors in ${f}. Nothing was committed/merged.`);
+      if (now.warnings > base) return fail(`verify: ESLint warnings increased in ${f}. Nothing was committed/merged.`);
+    }
+  }
+  for (const c of area.commands ?? []) {
+    const run = (isWin && c.runWin) || c.run;
+    out += `  $ ${c.label ?? run}\n`;
+    const r = await runCapture(run, [], { cwd: join(REPO_ROOT, c.cwd ?? '.'), shell: true });
+    out += r.stdout + r.stderr;
+    if (r.status !== 0) return fail(`gate failed at: ${c.label ?? run}. Nothing was committed/merged.`);
+  }
+  return { ok: true, out };
+}
+
+/** Every area of .devflow.json touched by `files`, in parallel (areas are independent). */
+async function verify(files) {
   const touched = cfg.areas.map(a => ({ area: a, files: files.filter(f => a.paths.some(p => f.startsWith(p))) }))
     .filter(t => t.files.length);
   if (!cfg.areas.length) return console.log('\n▶ verify: no areas in .devflow.json — nothing to run');
   if (!touched.length) return console.log('\n▶ verify: no changed file belongs to a gate area — nothing to run');
 
-  for (const { area, files: areaFiles } of touched) {
-    step(`verify ${area.name}`);
-    if (area.eslint) {
-      const { cwd = '.', extensions = ['.ts', '.tsx', '.js', '.jsx', '.vue', '.html'] } = area.eslint;
-      const prefix = cwd === '.' ? '' : `${cwd.replace(/\/$/, '')}/`;
-      const renamed = renamedFromDev();
-      for (const f of areaFiles.filter(f => f.startsWith(prefix) && extensions.some(e => f.endsWith(e)) && existsSync(join(REPO_ROOT, f)))) {
-        const now = eslintCounts(cwd, f, null);
-        const before = eslintCounts(cwd, f, DEV, renamed.get(f));
-        const from = renamed.has(f) ? ` at ${renamed.get(f)}` : '';
-        console.log(`  ${f}: ${now.errors} error(s), ${now.warnings} warning(s) (${DEV}${from}: ${before.warnings})`);
-        if (now.errors > 0) die(`verify: ESLint errors in ${f}. Nothing was committed/merged.`);
-        if (now.warnings > before.warnings) die(`verify: ESLint warnings increased in ${f}. Nothing was committed/merged.`);
-      }
-    }
-    for (const c of area.commands ?? []) {
-      const run = (isWin && c.runWin) || c.run;
-      runLocal(c.label ?? run, run, [], join(REPO_ROOT, c.cwd ?? '.'), { shell: true });
-    }
-  }
+  const show = r => (process.stdout.write(`${r.out}\n`), r);
+  const results = await Promise.all(touched.map(t => verifyArea(t.area, t.files).then(show)));
+  if (results.some(r => !r.ok)) die('verify failed (see the output above). Nothing was committed/merged.');
   console.log('  ✔ verify passed');
 }
 
@@ -280,7 +325,7 @@ function branchNameFor(header) {
   return `${type}/${scope ? `${scope}-` : ''}${slugify(subject)}`;
 }
 
-function ship(opts) {
+async function ship(opts) {
   if (opts.messageFile && opts.messages.length) die('use either -m or -F, not both');
   const header = opts.messageFile
     ? readFileSync(opts.messageFile, 'utf8').split(/\r?\n/)[0]
@@ -300,6 +345,7 @@ function ship(opts) {
   if (isMainWorktree() && !opts.flags.has('shared-ok')) {
     const listed = new Set(opts.paths.flatMap(p => changedFiles(toRepoPath(p))));
     const others = changedFiles().filter(f => !listed.has(f));
+    if (others.length && currentBranch() === DEV) return shipIsolated(opts, header);
     if (others.length) {
       die('main checkout has other uncommitted changes (maybe another session):\n' +
           others.map(f => `    ${f}`).join('\n') +
@@ -312,7 +358,7 @@ function ship(opts) {
   if (!branch) die('detached HEAD — checkout a branch first.');
   if (branch === MAIN) die(`on ${MAIN}: it only moves by \`${hint('promote')}\`. Work on a task branch.`);
 
-  if (opts.flags.has('verify')) verify(opts.paths.flatMap(p => changedFiles(toRepoPath(p))));
+  if (opts.flags.has('verify')) await verify(opts.paths.flatMap(p => changedFiles(toRepoPath(p))));
 
   if (branch === DEV) {
     const newBranch = branchNameFor(header);
@@ -328,15 +374,63 @@ function ship(opts) {
   const msgArgs = opts.messageFile ? ['-F', opts.messageFile] : opts.messages.flatMap(m => ['-m', m]);
   exec('git', ['commit', ...msgArgs, '--', ...opts.paths]);
 
-  if (opts.flags.has('land') || opts.flags.has('promote')) land();
+  if (opts.flags.has('land') || opts.flags.has('promote')) await land();
   if (opts.flags.has('promote')) promote();
+}
+
+/** `ship` on the integration branch while the shared checkout holds other people's uncommitted files:
+ * commit and land the listed files from a private task worktree, so the other files are never touched.
+ * Flow: copy the listed files into a new worktree → `ship` there → put the listed files back to HEAD in
+ * the main checkout (so the fast-forward of DEV can overwrite them) → `land` there (with --land) →
+ * untask. A red gate leaves the commit on the task branch/worktree; the main checkout no longer has
+ * those edits. */
+function shipIsolated(opts, header) {
+  if (opts.flags.has('promote')) die('--promote is not supported while other files are uncommitted; land first, promote from a clean checkout.');
+  const files = [...new Set(opts.paths.flatMap(p => changedFiles(toRepoPath(p))))];
+  const branch = branchNameFor(header);
+  const wt = join(REPO_ROOT, ...cfg.worktreeDir.split('/'), branch.replace(/\//g, '-'));
+  const land = opts.flags.has('land');
+  step(`other files are uncommitted in the shared checkout: isolate ${files.length} file(s) in ${branch}`);
+  if (dryRun) {
+    console.log(`  [dry-run] worktree ${wt}; copy ${files.join(', ')}; ship${land ? '; land; untask' : ''}`);
+    return;
+  }
+  task({ paths: [branch] });
+  for (const f of files) {
+    const src = join(REPO_ROOT, f);
+    const dst = join(wt, f);
+    if (existsSync(src)) {
+      mkdirSync(dirname(dst), { recursive: true });
+      copyFileSync(src, dst);
+    } else if (existsSync(dst)) unlinkSync(dst); // deleted in the main checkout
+  }
+  const self = fileURLToPath(import.meta.url);
+  const node = args => spawnSync(process.execPath, [self, ...args], { cwd: wt, stdio: 'inherit' }).status === 0;
+  const shipArgs = [...(opts.messageFile ? ['-F', resolve(opts.messageFile)] : opts.messages.flatMap(m => ['-m', m])),
+    ...(opts.flags.has('verify') ? ['--verify'] : []), ...(opts.flags.has('no-cache') ? ['--no-cache'] : []), ...files];
+  if (!node(['ship', ...shipArgs])) die(`ship failed in ${wt}; the main checkout is untouched. Fix there, or untask -- ${branch}.`);
+  if (!land) return console.log(`\n  ✔ committed on ${branch} (worktree ${wt}); main checkout untouched. Next: land from that worktree.`);
+
+  step('restore listed files in the main checkout (their edits now live in the task commit)');
+  for (const f of files) {
+    if (git(['ls-files', '--error-unmatch', '--', f], { allowFail: true }) !== null) exec('git', ['checkout', 'HEAD', '--', f]);
+    else if (existsSync(join(REPO_ROOT, f))) unlinkSync(join(REPO_ROOT, f));
+  }
+  if (!node(['land'])) die(`land failed (gate red?): the work is committed on ${branch} in ${wt}. Fix and ship/land there (skill steward); main checkout no longer has these edits.`);
+  untask({ paths: [branch] });
 }
 
 // ---------- gate: what land requires; `check` runs it alone ----------
 
 /** commitlint on DEV..HEAD, hard rules (ERROR blocks), then per-area checks of every file changed vs
  * DEV — committed or not (land runs on a clean tree anyway). */
-function gate() {
+async function gate() {
+  // A gate that passed for this exact HEAD on a clean tree, with DEV unchanged, would give the same result.
+  const key = git(['status', '--porcelain']) ? null : `${git(['rev-parse', 'HEAD'])} ${git(['rev-parse', DEV])}`;
+  const cacheFile = join(git(['rev-parse', '--absolute-git-dir']), 'gate-passed');
+  if (key && !opts.flags.has('no-cache') && existsSync(cacheFile) && readFileSync(cacheFile, 'utf8') === key) {
+    return console.log(`\n▶ gate: already passed for this HEAD on this ${DEV} (clean tree) — skipped. --no-cache to rerun.`);
+  }
   if (git(['rev-list', '--count', `${DEV}..HEAD`]) !== '0' && cfg.commitlint !== false) {
     const cli = join(REPO_ROOT, 'node_modules', '@commitlint', 'cli', 'cli.js');
     if (existsSync(cli)) {
@@ -352,18 +446,19 @@ function gate() {
   runLocal(`hard-rules --base ${DEV} --strict`, process.execPath,
     [join(HERE, 'hard-rules.mjs'), '--base', DEV, '--strict'], REPO_ROOT);
   const committed = git(['-c', 'core.quotepath=off', 'diff', '--name-only', `${DEV}...HEAD`]).split('\n').filter(Boolean);
-  verify([...new Set([...committed, ...changedFiles()])]);
+  await verify([...new Set([...committed, ...changedFiles()])]);
+  if (key && !dryRun) writeFileSync(cacheFile, key);
 }
 
-function check() {
+async function check() {
   requireBranch(DEV);
-  gate();
+  await gate();
   console.log(`\n  ✔ check passed (same gate as ${hint('land')}; nothing was committed or merged)`);
 }
 
 // ---------- land: task branch → DEV (fast-forward) ----------
 
-function land() {
+async function land() {
   const branch = currentBranch();
   if (!branch) die('detached HEAD — checkout the task branch first.');
   if ([DEV, MAIN].includes(branch)) die(`on ${branch}: run land from the task branch (its worktree); use promote for ${MAIN}.`);
@@ -381,7 +476,7 @@ function land() {
     }
   }
 
-  gate();
+  await gate();
 
   step(`fast-forward ${DEV} → ${branch}`);
   fastForward(DEV, branch);
@@ -496,6 +591,130 @@ function backup(refs = [DEV, MAIN, '--tags']) {
   }
 }
 
+// ---------- doctor: is this repo ready for the devflow loop? ----------
+
+function doctor() {
+  const problems = [];
+  const notes = [];
+  const ok = m => console.log(`  ✔ ${m}`);
+  const warn = m => { notes.push(m); console.log(`  ! ${m}`); };
+  const bad = m => { problems.push(m); console.log(`  ✖ ${m}`); };
+
+  step('doctor: repo readiness');
+  if (!cfg.found) warn('no .devflow.json — using defaults (dev → main, origin backup, no gate areas). Run /devflow:init to opt in.');
+  for (const [label, b] of [['integration', DEV], ['release', MAIN]]) {
+    if (!branchExists(b)) bad(`${label} branch '${b}' does not exist (create it: git branch ${b} ${b === DEV ? MAIN : 'HEAD'}).`);
+    else ok(`${label} branch '${b}' exists`);
+  }
+  const id = (k) => git(['config', k], { allowFail: true });
+  if (!id('user.name') || !id('user.email')) bad('git user.name / user.email not set — commits and tags need an identity.');
+  else ok(`git identity: ${id('user.name')} <${id('user.email')}>`);
+
+  if (!cfg.areas.length) warn('no gate areas in .devflow.json — land will run commitlint + hard rules only.');
+  for (const a of cfg.areas) {
+    for (const p of a.paths ?? []) {
+      const full = join(REPO_ROOT, p);
+      if (!existsSync(full)) bad(`area '${a.name}': path '${p || '.'}' does not exist.`);
+    }
+    if (a.eslint) {
+      const cwd = join(REPO_ROOT, a.eslint.cwd ?? '.');
+      const bin = [join(cwd, 'node_modules', 'eslint', 'bin', 'eslint.js'), join(REPO_ROOT, 'node_modules', 'eslint', 'bin', 'eslint.js')].find(existsSync);
+      if (!existsSync(cwd)) bad(`area '${a.name}': eslint cwd '${a.eslint.cwd}' does not exist.`);
+      else if (!bin) bad(`area '${a.name}': eslint not installed (needed by the gate) — npm install in ${a.eslint.cwd ?? '.'}.`);
+      else ok(`area '${a.name}': eslint ready`);
+    }
+    for (const c of a.commands ?? []) {
+      if (!c.run) bad(`area '${a.name}': a command has no 'run'.`);
+      else ok(`area '${a.name}': gate command '${c.label ?? c.run}'`);
+    }
+  }
+  if (cfg.commitlint === true && !existsSync(join(REPO_ROOT, 'node_modules', '@commitlint', 'cli', 'cli.js')))
+    bad('commitlint is required by .devflow.json but node_modules/@commitlint/cli is missing (npm install).');
+  else if (cfg.commitlint === 'auto' && !existsSync(join(REPO_ROOT, 'node_modules', '@commitlint', 'cli', 'cli.js')))
+    warn('commitlint not installed — the gate will skip the commit-message check (set "commitlint": true to require it).');
+  else ok('commitlint ready');
+
+  const hookFile = join(REPO_ROOT, '.husky', 'commit-msg');
+  if (existsSync(join(REPO_ROOT, '.husky'))) {
+    if (!existsSync(hookFile)) warn('.husky/commit-msg missing — commit messages will not be linted locally.');
+    else {
+      let mode = 0;
+      try { mode = statSync(hookFile).mode; } catch { /* unreadable */ }
+      if (!(mode & 0o111)) bad('.husky/commit-msg is not executable — git will silently skip it (chmod +x .husky/commit-msg).');
+      else ok('.husky/commit-msg executable');
+    }
+  }
+  if (problems.length) die(`doctor: ${problems.length} problem(s) — fix them before relying on the gate.`);
+  if (notes.length) console.log(`\n  ${notes.length} warning(s), no blockers.`);
+  else console.log('\n  ✔ doctor: everything looks good.');
+}
+
+// ---------- status: who works on what (read-only) ----------
+
+/** One line per task worktree (branch, ahead/behind DEV, dirty, handoff note, queue task), then the
+ * top ready tasks. Git says who is working; the queue says what is left. */
+function status() {
+  requireBranch(DEV);
+  const mainRoot = mainCheckout(REPO_ROOT);
+  const queue = loadQueue(queueFile(REPO_ROOT));
+  const tasks = itemsOf(queue.sections);
+  const taskOf = b => tasks.find(t => t.meta?.branch === b && t.section !== 'Done');
+  const marker = resolve(mainRoot, ...cfg.worktreeDir.split('/'));
+  const trees = [...worktreeBranches()].filter(([, p]) => resolve(p).startsWith(marker));
+
+  step(`task worktrees (${trees.length}) — vs ${DEV}`);
+  if (!trees.length) console.log('  (none)');
+  for (const [branch, path] of trees) {
+    const [behind, ahead] = (git(['rev-list', '--left-right', '--count', `${DEV}...${branch}`], { allowFail: true }) ?? '0\t0').split(/\s+/);
+    const dirty = git(['-C', path, 'status', '--porcelain'], { allowFail: true });
+    const note = existsSync(join(path, ...cfg.handoff.dir.split('/'), `${branch.replace(/\//g, '-')}.md`));
+    const t = taskOf(branch);
+    const bits = [`+${ahead}/-${behind}`, dirty ? `${dirty.split('\n').length} uncommitted` : 'clean'];
+    if (note) bits.push('handoff');
+    // ahead 0 is either a fresh branch or one already landed; a branch that ever moved has > 1 reflog entry.
+    const moved = (git(['reflog', 'show', '--format=%h', `refs/heads/${branch}`], { allowFail: true }) ?? '').split('\n').length > 1;
+    if (ahead === '0' && moved) bits.push(`already in ${DEV} → untask`);
+    console.log(`  ${branch.padEnd(32)} ${bits.join(' · ')}${t ? `   [${t.id} ${t.title}]` : ''}`);
+  }
+  const orphanClaims = tasks.filter(t => t.section === 'In progress' && t.meta?.branch && !trees.some(([b]) => b === t.meta.branch));
+  for (const t of orphanClaims) {
+    console.log(`  ! ${t.id} is In progress on ${t.meta.branch}, but no task worktree has it` +
+      (branchExists(t.meta.branch) ? '' : ` (branch gone — landed? ${hint('queue')} -- done ${t.id})`));
+  }
+
+  if (!queue.exists) return;
+  const { ready } = readyItems(queue.sections);
+  step(`queue: ${ready.length} ready`);
+  for (const it of ready.slice(0, 3)) console.log(`  ${describeTask(it, { root: mainRoot, hideBlockedBy: true })}`);
+  if (ready.length > 3) console.log(`  … ${hint('queue')} -- ready`);
+}
+
+// ---------- cloud-push: back up a cloud session branch (ccr-*) to the remote ----------
+
+const CLOUD_BRANCH = /^ccr-[\w.-]+$/;
+
+/** The only push allowed from a cloud session (its container is thrown away). Plain push of the current
+ * ccr-* branch: never DEV/MAIN/tags, never forced. Landing still happens locally via land. */
+function cloudPush() {
+  const remote = cfg.remote;
+  if (!remote || git(['remote', 'get-url', remote], { allowFail: true }) === null) die(`no ${remote ?? 'backup'} remote.`);
+  const branch = currentBranch();
+  if (!branch || !CLOUD_BRANCH.test(branch)) die(`cloud-push only pushes a ccr-* session branch (current: ${branch || 'detached HEAD'}).`);
+  if (git(['status', '--porcelain', '--untracked-files=no'])) die('tracked files have uncommitted changes — commit them first, or they are lost with the container.');
+
+  step('hard rules (secrets etc.) before leaving the container');
+  const base = branchExists(DEV) ? DEV : `${remote}/${DEV}`;
+  if (spawnSync(process.execPath, [join(HERE, 'hard-rules.mjs'), '--strict', '--base', base], { cwd: REPO_ROOT, stdio: 'inherit' }).status !== 0) {
+    die('hard-rules reported ERROR; fix it before cloud-push.');
+  }
+
+  step(`cloud-push: ${branch} → ${remote} (backup only, no force)`);
+  if (!exec('git', ['push', remote, branch], { allowFail: true })) {
+    die(`push rejected (${remote} has commits this branch lacks?). Do not force; ask the user.`);
+  }
+  console.log(`  ✔ pushed. Land locally: git fetch ${remote} ${branch} → ${hint('task')} (from ${branch}) → ${hint('land')}`);
+}
+
 // ---------- sync: drop local branches already in DEV ----------
 
 function sync() {
@@ -513,6 +732,12 @@ function sync() {
     }
     exec('git', ['branch', '-D', b]); // --merged DEV guarantees nothing is lost
   }
+  // Cloud branches backed up to the remote and now in DEV: the user deletes them by hand
+  // (the guard hook blocks git push, so the script does not delete remote branches).
+  const remote = cfg.remote;
+  const stale = ((remote && git(['for-each-ref', '--merged', DEV, '--format=%(refname:short)', `refs/remotes/${remote}/ccr-*`], { allowFail: true })) || '')
+    .split('\n').filter(Boolean).map(r => r.slice(remote.length + 1));
+  if (stale.length) console.log(`\n  Landed cloud branches still on ${remote} — delete by hand: git push ${remote} --delete ${stale.join(' ')}`);
 }
 
 // ---------- main ----------
@@ -525,22 +750,28 @@ if (!cfg.found && command && command !== 'help') {
 }
 
 switch (command) {
-  case 'ship': ship(opts); break;
-  case 'land': land(); break;
-  case 'check': check(); break;
+  case 'ship': await ship(opts); break;
+  case 'land': await land(); break;
+  case 'check': await check(); break;
   case 'promote': promote(); break;
   case 'sync': sync(); break;
   case 'backup': backup(); break;
+  case 'cloud-push': cloudPush(); break;
+  case 'doctor': doctor(); break;
+  case 'status': status(); break;
   case 'task': task(opts); break;
   case 'untask': untask(opts); break;
   default:
     console.log(`Usage (add --dry-run to any command to only print mutating steps):
-  ship -- (-m "feat(scope): subject" [-m "body"] | -F msg.txt) [--verify] [--land] [--promote] [--shared-ok] <file>...
+  ship -- (-m "feat(scope): subject" [-m "body"] | -F msg.txt) [--verify] [--land] [--promote] [--shared-ok] [--no-cache] <file>...
   check                    run the land gate on the current branch, merge nothing
   land                     gate + fast-forward ${DEV} to the current task branch, push ${DEV}
   promote                  fast-forward ${MAIN} to ${DEV} + tag ${cfg.tagPrefix}X.Y.Z, push ${DEV}/${MAIN}/tag
   sync                     delete local branches already in ${DEV}
   backup                   push ${DEV}, ${MAIN} and tags to ${cfg.remote}
+  cloud-push               cloud session only: push the current ccr-* branch to ${cfg.remote} as a backup
+  status                   who works on what: task worktrees vs ${DEV} + top ready queue tasks
+  doctor                   check the repo is ready for the devflow loop (branches, gate tooling, hooks)
   task -- <type>/<desc>    new worktree from ${DEV} for one task/session
   untask -- <branch>       remove that worktree safely (run from the main checkout)`);
     process.exit(command && command !== 'help' ? 1 : 0);

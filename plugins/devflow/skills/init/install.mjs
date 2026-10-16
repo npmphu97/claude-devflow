@@ -5,7 +5,7 @@
 // Usage: node install.mjs [--target <repo>] [--dry-run] [--update] [--force] [--no-package-json]
 //                         [--create-package-json] [--create-dev]
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, copyFileSync, appendFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, copyFileSync, appendFileSync, chmodSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -51,8 +51,16 @@ for (const f of readdirSync(scriptsSrc)) {
   }
   did(existed ? 'updated' : 'created', rel);
 }
+const ignoredPath = p => spawnSync('git', ['check-ignore', '-q', '--no-index', p], { cwd: root }).status === 0;
 if (flag('update')) {
   console.log(report.join('\n'));
+  // Since 0.5 the queue is one shared, uncommitted file in the main checkout.
+  if (!ignoredPath('.claude/task-queue.md')) {
+    const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '.claude/task-queue.md'], { cwd: root }).status === 0;
+    console.log('\n  ! .claude/task-queue.md is shared by every worktree and should not be committed any more:');
+    console.log(`    add "**/.claude/task-queue.md*" to .gitignore${tracked ? ', then: git rm --cached .claude/task-queue.md (commit both as a chore task)' : ''}`);
+  }
+  if (!existsSync(join(root, '.claude', 'settings.json'))) console.log('  ! no .claude/settings.json — rerun without --update to get the devflow permission allowlist.');
   process.exit(0);
 }
 
@@ -107,7 +115,7 @@ for (const d of dirs) {
     areas.push({ name: `${name}-dotnet`, paths, commands: [{ label: `${name}: dotnet test`, cwd: d, run: 'dotnet test' }] });
   }
 }
-linkDirs.push('.husky/_');
+if (existsSync(join(root, '.husky'))) linkDirs.push('.husky/_');
 
 const branchExists = b => spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${b}`], { cwd: root }).status === 0;
 const release = branchExists('main') ? 'main' : branchExists('master') ? 'master' : 'main';
@@ -135,9 +143,15 @@ const SCRIPTS = {
   promote: 'node scripts/devflow/flow.mjs promote',
   sync: 'node scripts/devflow/flow.mjs sync',
   backup: 'node scripts/devflow/flow.mjs backup',
+  'cloud-push': 'node scripts/devflow/flow.mjs cloud-push',
   'hard-rules': 'node scripts/devflow/hard-rules.mjs',
   retro: 'node scripts/devflow/retro.mjs',
   handoff: 'node scripts/devflow/handoff.mjs',
+  queue: 'node scripts/devflow/queue.mjs',
+  'worktrees:clean': 'node scripts/devflow/worktrees-clean.mjs',
+  doctor: 'node scripts/devflow/flow.mjs doctor',
+  status: 'node scripts/devflow/flow.mjs status',
+  'devflow-test': 'node --test scripts/devflow/devflow.test.mjs',
 };
 const pkgFile = join(root, 'package.json');
 if (!flag('no-package-json') && (existsSync(pkgFile) || flag('create-package-json'))) {
@@ -172,17 +186,19 @@ if (existsSync(claudeMd)) {
 
 write('docs/AGENT_WORKFLOW.md', tpl('AGENT_WORKFLOW.md'));
 write('.claude/handoff/README.md', tpl('handoff-README.md'));
+write('.claude/task-queue.md', tpl('task-queue.md'));
 
 // devflow files must be committable: a global excludesFile that ignores CLAUDE.md / .claude/ / openspec/
 // would silently keep handoff notes and the CLAUDE.md section out of git, so re-include them here.
 const gitignore = join(root, '.gitignore');
 const gi = existsSync(gitignore) ? readFileSync(gitignore, 'utf8') : '';
-const ignored = p => spawnSync('git', ['check-ignore', '-q', '--no-index', p], { cwd: root }).status === 0;
 const lines = [];
 for (const [probe, line] of [['CLAUDE.md', '!CLAUDE.md'], ['.claude/handoff/README.md', '!.claude/'], ['openspec/config.yaml', '!openspec/']]) {
-  if (ignored(probe) && !gi.split(/\r?\n/).includes(line)) lines.push(line);
+  if (ignoredPath(probe) && !gi.split(/\r?\n/).includes(line)) lines.push(line);
 }
 if (!/^(\*\*\/)?\/?\.claude\/worktrees\/?$/m.test(gi)) lines.push('**/.claude/worktrees/');
+// The task queue is one shared file in the main checkout, never committed (queue-lib.mjs).
+if (!/task-queue\.md/.test(gi)) lines.push('**/.claude/task-queue.md*');
 if (lines.some(l => l === '!.claude/') && !/settings\.local\.json/.test(gi)) lines.push('**/.claude/settings.local.json*');
 if (!lines.length) did('kept', '.gitignore (already fine)');
 else {
@@ -191,11 +207,31 @@ else {
   did('updated', `.gitignore (+ ${lines.join(', ')})`);
 }
 
+// Pre-allow the safe, local devflow commands so the loop does not stop on permission prompts.
+// land / promote stay out: they move dev / main and need the user's explicit request.
+const ALLOW = ['task', 'untask', 'ship', 'check', 'status', 'queue', 'handoff', 'hard-rules', 'retro', 'doctor', 'devflow-test', 'worktrees:clean']
+  .map(c => `Bash(npm run ${c}:*)`)
+  .concat(['Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)']);
+const settingsFile = join(root, '.claude', 'settings.json');
+if (existsSync(settingsFile)) {
+  const missing = ALLOW.filter(a => !readJson(settingsFile)?.permissions?.allow?.includes(a));
+  did('kept', `.claude/settings.json (exists${missing.length ? ` — consider adding to permissions.allow: ${missing.join(', ')}` : ', allowlist already there'})`);
+} else write('.claude/settings.json', `${JSON.stringify({ plansDirectory: '.claude/plans', permissions: { allow: ALLOW } }, null, 2)}\n`);
+
 const commitlintFiles = ['commitlint.config.js', 'commitlint.config.cjs', 'commitlint.config.mjs', 'commitlint.config.ts', '.commitlintrc', '.commitlintrc.json', '.commitlintrc.yml', '.commitlintrc.js'];
 if (commitlintFiles.some(f => existsSync(join(root, f)))) did('kept', 'commitlint config (exists)');
 else write('commitlint.config.cjs', tpl('commitlint.config.cjs'));
 if (existsSync(join(root, '.husky')) || flag('create-package-json') || existsSync(pkgFile)) {
-  write('.husky/commit-msg', 'npx --no -- commitlint --edit "$1"\n');
+  // The hook must be executable or git silently skips it. Use the local commitlint binary directly:
+  // `npx --no -- commitlint` breaks on npm >= 10 (bare `--no` is no longer --no-install).
+  write('.husky/commit-msg',
+    '#!/bin/sh\n' +
+    '# generated by devflow install.mjs — lint the commit message with the repo-local commitlint\n' +
+    'if [ -x "node_modules/.bin/commitlint" ]; then\n' +
+    '  exec node_modules/.bin/commitlint --edit "$1"\n' +
+    'fi\n' +
+    'exec npx --no-install commitlint --edit "$1"\n');
+  if (!dryRun) chmodSync(join(root, '.husky', 'commit-msg'), 0o755);
 }
 
 // ---------- 5. integration branch ----------

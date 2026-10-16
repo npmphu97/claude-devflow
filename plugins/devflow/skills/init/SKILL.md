@@ -46,8 +46,8 @@ Glob `**/devflow/skills/init/install.mjs` dưới `~/.claude/plugins/`.
    "OpenSpec: khi nào dùng" trong section CLAUDE.md vừa thêm.
 7. **CLAUDE.md:** điền các ô `<...>` của section devflow (lệnh build / test + baseline, luật cứng riêng,
    scope commit). Chưa có phần tổng quan / kiến trúc → đề xuất người dùng chạy `/init` của Claude Code.
-8. **Kiểm chứng:** `npm run check` trên nhánh hiện tại (gate phải chạy được, xanh hoặc đỏ có lý do rõ),
-   `npm run hard-rules`, `node scripts/devflow/flow.mjs help`.
+8. **Kiểm chứng:** `npm run doctor` (repo sẵn sàng: nhánh, tooling gate, hook), rồi `npm run check`
+   trên nhánh hiện tại (gate phải chạy được, xanh hoặc đỏ có lý do rõ), `npm run hard-rules`.
 9. **Commit** (hỏi trước): tạo worktree / nhánh `chore/devflow-setup`, commit bằng
    `npm run ship -- -m "chore(devflow): set up local workflow" <các file vừa tạo / sửa>`; land khi người dùng bảo.
 

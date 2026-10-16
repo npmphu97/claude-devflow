@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // SessionStart hook (only in repos with a .devflow.json):
-// 1. Every session: print the current branch's handoff note (stdout is added to the agent's context).
+// 1. Every session: print the current branch's handoff note (stdout is added to the agent's context),
+//    then a few lines of the shared task queue (this branch's task, how many are ready, the next one).
 // 2. Cloud sessions (CLAUDE_CODE_REMOTE=true): run .devflow.json "remoteSetup" commands. Output goes to
 //    stderr to keep the context small.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { repoRoot, loadConfig } from '../kit/scripts/devflow/config.mjs';
+import { queueFile, load as loadQueue, itemsOf, readyItems, describe } from '../kit/scripts/devflow/queue-lib.mjs';
 
 const root = repoRoot(process.env.CLAUDE_PROJECT_DIR || process.cwd());
 const cfg = loadConfig(root);
@@ -36,7 +38,22 @@ if (branch && branch !== 'HEAD') {
   }
 }
 
+const queue = loadQueue(queueFile(root));
+if (queue.exists) {
+  const mine = branch && itemsOf(queue.sections).find(t => t.section === 'In progress' && t.meta?.branch === branch);
+  const { ready } = readyItems(queue.sections);
+  console.log(`=== Task queue (.claude/task-queue.md in the main checkout; skill devflow:queue) ===`);
+  if (mine) console.log(`This branch is ${describe(mine)} — run \`queue done ${mine.id}\` after land.`);
+  console.log(`${ready.length} ready${ready[0] ? `; next: ${describe(ready[0], { hideBlockedBy: true })}` : ''}`);
+}
+
 if (process.env.CLAUDE_CODE_REMOTE === 'true') {
+  // Cloud clones have no local integration branch, so check / hard-rules could not diff against it.
+  const dev = cfg.integrationBranch;
+  if (cfg.remote && branch !== dev && spawnSync('git', ['ls-remote', '--exit-code', '--heads', cfg.remote, dev], { cwd: root }).status === 0) {
+    const f = spawnSync('git', ['fetch', '-q', cfg.remote, `${dev}:${dev}`], { cwd: root, stdio: ['ignore', process.stderr, process.stderr] });
+    if (f.status !== 0) console.error(`could not create local ${dev} from ${cfg.remote}/${dev}; cloud-push falls back to ${cfg.remote}/${dev}`);
+  }
   for (const c of cfg.remoteSetup) {
     const r = spawnSync(c, { cwd: root, shell: true, stdio: ['ignore', process.stderr, process.stderr] });
     if (r.status !== 0) console.error(`devflow remoteSetup failed: ${c}`);
