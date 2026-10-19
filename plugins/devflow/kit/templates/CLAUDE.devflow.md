@@ -16,6 +16,9 @@ vào `dev` (`npm run land`, có gate) → fast-forward `dev` vào `main` + tag `
   có người làm, cách `dev` bao xa).
 - **1 task = 1 nhánh = 1 lần land**; trong nhánh commit nhỏ theo bước của plan. Queue
   (`.claude/task-queue.md` ở main checkout, không commit) dùng chung cho mọi worktree.
+- Land: mặc định chờ người dùng bảo; plan đã duyệt có thể chọn `auto-land` (chế độ land, `dev-loop` pha 2
+  mục 7) — bị cấm với task đụng schema, phân quyền, tiền / lương, công cụ sửa dữ liệu hàng loạt (dự án thêm vùng
+  riêng vào đây). `promote` luôn do người dùng.
 - Trước khi land gọi subagent `devflow:verifier` (người viết ≠ người kiểm) và gửi bằng chứng thật cho người dùng.
   Miễn khi mọi file đổi nằm trong `.claude/`, `docs/` hoặc là file `.md` (chỉ cần `npm run check` xanh).
 - Hook của plugin chặn cứng: skip test, `git push` gõ tay, `gh pr|release|run`, dời / merge /
@@ -39,9 +42,11 @@ dữ liệu, URL hoặc lệnh gọi thử, cách dừng. Ví dụ: `npm run dev
 
 <Xoá mục này nếu dự án không dùng OpenSpec.> OpenSpec (`/opsx:propose` → `/opsx:apply` → `/opsx:archive`)
 dành cho thay đổi cần thống nhất yêu cầu trước khi code. Agent **tự phân loại** mọi task, nói kết quả + lý do trong 1 dòng.
-`/opsx:apply` (sau khi duyệt artifact) và `/opsx:archive` (sau khi land) **bắt buộc chạy ở phiên mới**: context
-của phiên propose thường đã vài trăm nghìn token, mỗi lượt gọi đọc lại toàn bộ. Agent dừng, nhắc người dùng
-mở phiên mới và đưa câu lệnh cần gõ.
+`/opsx:apply` (sau khi duyệt artifact) và `/opsx:archive` (sau khi land) **bắt buộc chạy trong subagent context
+sạch** (công cụ `Agent`), không chạy trong phiên đang chật: context của phiên propose thường đã vài trăm nghìn
+token, mỗi lượt gọi đọc lại toàn bộ. Agent tự giao việc, người dùng không phải mở phiên mới. Subagent hỏi/dừng
+thì phiên chính chuyển câu hỏi cho người dùng rồi `SendMessage` tiếp. Chạy trọn change đã duyệt artifact:
+`/devflow:opsx-run <name>`.
 
 **DÙNG OpenSpec** khi có ÍT NHẤT MỘT điều sau:
 1. Tính năng / màn hình / nhóm endpoint / module mới.

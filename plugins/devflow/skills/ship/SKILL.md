@@ -84,7 +84,8 @@ Version: tag do `promote` tạo là phiên bản thật. Bump theo Conventional 
   của phiên. Message nhiều dòng → ghi vào file trong scratchpad, truyền `-F <file>` (qua `npm run` trên
   Windows, xuống dòng trong `-m` làm mất các tham số phía sau). Quyết định quan trọng ghi vào body commit.
 - **Gate đỏ:** theo skill `devflow:steward` — đọc output, sửa root cause, `ship` commit mới, `land` lại.
-- `land` / `promote` chỉ chạy khi người dùng yêu cầu rõ trong phiên.
+- `land` chỉ chạy khi người dùng yêu cầu rõ trong phiên hoặc plan đã duyệt chọn `auto-land` và đủ điều kiện
+  (xem `devflow:steward`, `dev-loop` pha 2 mục 7); `promote` chỉ khi người dùng yêu cầu riêng.
 
 ## Lỗi thường gặp
 - `main checkout has other uncommitted changes`: chuyển sang worktree (`npm run task`).

@@ -16,14 +16,14 @@ mỗi pha có đầu ra rõ ràng và cổng kiểm soát trước khi sang pha 
 | `.devflow.json` | Cấu hình máy: tên nhánh, remote sao lưu, vùng gate (lint/build/test), luật cứng dò bằng regex |
 | `scripts/devflow/*.mjs` | Phần máy móc, chạy không cần AI: luồng git, gate, hard-rules, retro, handoff |
 | `.claude/task-queue.md` | Hàng đợi việc chung ở main checkout (không commit): làm gì, việc nào ready, việc nào đang chờ |
-| Plugin `devflow` | Skill `dev-loop`, `hot-fix-dev`, `ship`, `steward`, `queue`, `handoff`, `retro`, `init`; agent `verifier`; hook chặn lệnh nguy hiểm + in ghi chú handoff và tóm tắt queue |
+| Plugin `devflow` | Skill `dev-loop`, `opsx-run`, `hot-fix-dev`, `ship`, `steward`, `queue`, `handoff`, `retro`, `init`; agent `verifier`; hook chặn lệnh nguy hiểm + in ghi chú handoff và tóm tắt queue |
 
 ## Các pha
 
 | Pha | Vai trò | Agent làm gì | Gate qua pha |
 |---|---|---|---|
 | 0. Intake | PO / BA | Đọc yêu cầu, hỏi lại chỗ mơ hồ, viết acceptance criteria "Khi … thì …" | Có tiêu chí rõ |
-| 0.5. Phân loại | Tech lead | OpenSpec hay làm thẳng (tiêu chí trong CLAUDE.md); OpenSpec: `/opsx:apply` và `/opsx:archive` ở **phiên mới** | Nói rõ kết quả + lý do |
+| 0.5. Phân loại | Tech lead | OpenSpec hay làm thẳng (tiêu chí trong CLAUDE.md); OpenSpec: `/opsx:apply` và `/opsx:archive` trong **subagent context sạch** (skill `opsx-run`) | Nói rõ kết quả + lý do |
 | 1. Analyze | BA + Tech lead | Explore code liên quan, test đang có, nơi dùng chung | Biết file nào bị ảnh hưởng |
 | 2. Plan | Tech lead | Bước + cách kiểm, schema, transaction, dữ liệu cũ, ma trận test, rollback | **Người duyệt** |
 | 3. Implement | Developer | Worktree riêng; task nhỏ lưu plan đã duyệt vào `.claude/plans/<nhánh>.md` cho verifier; commit nhỏ Conventional Commits | Compile sạch |
@@ -55,7 +55,7 @@ Quyền tự chủ của agent tăng theo **bằng chứng**, không theo cảm 
 | 1. Kèm sát | Plan, code, test local, commit, báo cáo | Duyệt plan, đọc diff, bảo land | Gate chặn được lỗi lint/build/unit test |
 | 2. Tự kiểm chứng | Như 1 + chạy app thật, dán bằng chứng | Đọc bằng chứng thay vì chạy lại | Có seed dữ liệu cho app local |
 | 3. Việc nhỏ tự chạy | Task không cần OpenSpec chạy không kèm | Đọc diff + báo cáo | 4 tuần tỉ lệ fix-bám-feat giảm (`/devflow:retro`) |
-| 4. Auto-land có điều kiện | Tự land docs/test/UI nhỏ khi gate + verifier PASS | Soát trước khi promote | Nấc 3 ổn định nhiều tháng |
+| 4. Auto-land có điều kiện | Tự land (và archive) khi người dùng chọn `auto-land` lúc duyệt plan và gate + verifier + review sạch (không áp dụng cho schema, phân quyền, tiền/lương, công cụ sửa dữ liệu) | Soát lại trên `dev` trước khi promote | Bật theo từng task; theo dõi bằng `/devflow:retro` |
 
 Việc đụng dữ liệu production, schema, phân quyền, tiền: **luôn ở nấc 1**.
 
@@ -66,12 +66,13 @@ Việc đụng dữ liệu production, schema, phân quyền, tiền: **luôn �
 | Bắt đầu task | `/devflow:dev-loop <mô tả>` |
 | Lấy việc tiếp theo từ queue | `npm run queue -- next`, rồi `npm run queue -- start <id> --branch feat/<scope>-<mô-tả>` (claim + worktree) |
 | Ai đang làm gì | `npm run status` |
-| Xong một task | `npm run land` → `npm run queue -- done <id>` → (`/opsx:archive`, ở phiên mới) → `npm run untask -- <nhánh>` |
+| Xong một task | `npm run land` → `npm run queue -- done <id>` → `npm run untask -- <nhánh>` → (`/opsx:archive` trong subagent) |
+| Chạy trọn change OpenSpec đã duyệt | `/devflow:opsx-run <name>` (apply/archive trong subagent, check → verifier → review → commit → land theo chế độ đã chọn) |
 | Tính năng mới cần làm rõ yêu cầu | `/opsx:explore` rồi `/opsx:propose` |
 | Fix nhỏ làm thẳng trên `dev` | `/devflow:hot-fix-dev` |
 | Phiên cloud (nhánh `ccr-*`) xong việc | `npm run cloud-push` (chỉ backup, không land) |
 | Kiểm trước khi land | `npm run check`, subagent `devflow:verifier` |
-| Đưa nhánh vào `dev` / `dev` lên `main` | "land" / "promote" |
+| Đưa nhánh vào `dev` / `dev` lên `main` | "land" (hoặc tự động nếu plan chọn `auto-land`) / "promote" |
 | Dừng giữa chừng / tiếp tục | `/devflow:handoff` / `/devflow:handoff resume` |
 | Hằng tuần, sau sự cố | `/devflow:retro` |
 
