@@ -29,9 +29,10 @@ Không có PR: người dùng đọc diff (`git diff dev...<nhánh>`) và báo c
 - Thay đổi thiết kế, schema, API, xử lý dữ liệu thật → trả lời bằng đề xuất, chờ người quyết.
 
 ## Không bao giờ
-- Tự `land` hoặc `promote` khi người dùng **chưa yêu cầu rõ** trong phiên này. Khi được yêu cầu: chỉ
-  dùng `npm run land` / `npm run promote`, không merge / rebase tay lên `dev`/`main`, không land khi
-  gate chưa xanh.
+- Tự `promote` khi người dùng chưa yêu cầu riêng; tự `land` khi người dùng **chưa yêu cầu rõ** trong phiên
+  này và plan đã duyệt không chọn `auto-land` (điều kiện: `dev-loop` pha 2 mục 7, skill `devflow:opsx-run`
+  bước 5). Khi được phép: chỉ dùng `npm run land` / `npm run promote`, không merge / rebase tay lên
+  `dev`/`main`, không land khi gate chưa xanh.
 - Tự gõ `git push` (nhất là nhánh task), force-push, mở PR, hay gọi `gh pr|release|run` — sao lưu do
   `land` / `promote` / `npm run backup` lo.
 - Tự chạy script sửa dữ liệu trên production.
@@ -39,4 +40,4 @@ Không có PR: người dùng đọc diff (`git diff dev...<nhánh>`) và báo c
 
 ## Xong khi
 Gate xanh, verifier PASS, báo cáo đã gửi người dùng — chờ người dùng bảo land (hoặc, nếu đã được yêu
-cầu, chạy `npm run land`, rồi `untask`).
+cầu hoặc plan chọn `auto-land` và đủ điều kiện, chạy `npm run land`, rồi `untask`).

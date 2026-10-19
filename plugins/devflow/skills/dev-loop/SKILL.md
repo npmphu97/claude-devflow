@@ -24,8 +24,12 @@ Repo chưa có `.devflow.json` → đề xuất chạy `/devflow:init` trước.
 Repo có `openspec/` → áp tiêu chí "OpenSpec: khi nào dùng" trong `CLAUDE.md`, nói kết quả + lý do trong 1 dòng.
 - **Lớn → OpenSpec:** `/opsx:explore` nếu cần làm rõ, rồi
   `/opsx:propose <tên-change>`. Artifact chính là plan của pha 2 — dừng chờ người duyệt. Sau khi
-  duyệt: `/opsx:apply` **ở phiên mới** (dừng, nhắc người dùng mở phiên mới và gõ `/opsx:apply <name>`),
-  vẫn giữ pha 4–6. Sau khi land vào `dev`: `/opsx:archive` **ở phiên mới** (dừng, nhắc như trên).
+  duyệt, agent chạy skill **`devflow:opsx-run <name>`**: worktree → `/opsx:apply` trong subagent context
+  sạch (`Agent`, general-purpose) → check → verifier → review → commit → land theo "Chế độ land" →
+  `/opsx:archive` trong subagent → một báo cáo cuối. Người dùng không phải mở phiên mới hay nhắc từng
+  bước. Subagent không hỏi được người dùng: câu hỏi của nó do phiên chính chuyển, rồi `SendMessage` để
+  nó làm tiếp. Không có công cụ `Agent` (phiên cloud, đang là subagent) → dừng sau khi duyệt, nhắc người
+  dùng mở phiên mới và gõ `/opsx:apply <name>`, rồi `/opsx:archive <name>` sau khi land. Pha 3–7 bên dưới là chi tiết của chuỗi đó (task nhỏ đi tay theo các pha này).
 - **Nhỏ → làm thẳng:** tiếp pha 1, plan ngắn gọn trong chat.
 - **Vùng xám:** hỏi người dùng, kèm đề xuất.
 Repo không có `openspec/` → mọi task làm thẳng; task lớn thì plan ở pha 2 chi tiết hơn.
@@ -45,10 +49,21 @@ Task OpenSpec: `design.md` + `tasks.md` phải trả lời đủ các câu dư�
 5. Ma trận test đề xuất (tiêu chí / dòng ví dụ → tầng → tên test). Hỏi người dùng giữ, cắt, hay bỏ;
    ghi quyết định vào plan.
 6. Rollback nếu release lỗi.
+7. **Chế độ land** — đề xuất `auto-land` hoặc `manual` kèm lý do 1 dòng, người dùng chọn cùng lúc duyệt plan
+   (OpenSpec: ghi mục "Chế độ land" vào `design.md`; task nhỏ: ghi vào `.claude/plans/<nhánh>.md`).
+   - `auto-land`: sau khi `check` xanh, verifier PASS (hoặc được miễn) và không còn finding review chưa xử
+     lý, agent tự `npm run land` rồi archive (nếu là OpenSpec), không chờ lời bảo.
+   - `manual`: dừng sau báo cáo, chờ người dùng bảo land (lời bảo đó gồm cả archive).
+   - **Buộc `manual`** (không đề xuất auto-land) khi task đụng: schema hoặc migration; phân quyền / xác
+     thực / bảo mật; tiền, thanh toán, lương; công cụ sửa dữ liệu hàng loạt; hoặc cần integration test mà
+     chưa chạy được. Dự án bổ sung vùng riêng trong mục "Chế độ land" của `CLAUDE.md`.
+   - `promote` luôn do người dùng yêu cầu riêng, bất kể chế độ.
+
 Bỏ câu không áp dụng cho dự án (ví dụ dự án không có DB). Chờ người dùng duyệt plan rồi mới code.
 
-Task OpenSpec: sau khi duyệt, **bắt buộc** implement ở session mới (xem pha 0.5). Plan dài của task
-nhỏ: đề xuất mở **session mới** để implement (context sạch, chỉ mang theo plan đã duyệt).
+Task OpenSpec: sau khi duyệt, **bắt buộc** implement trong subagent context sạch (xem pha 0.5). Plan dài
+của task nhỏ: cũng giao cho subagent, prompt chỉ đưa đường dẫn `.claude/plans/<nhánh>.md`, thay vì code
+tiếp trong session đã chật.
 
 ## 3. Implement
 - Task trong queue: `npm run queue -- next` lấy task ready ưu tiên cao nhất, rồi
@@ -81,6 +96,9 @@ Chạy và đọc kết quả thật, không đoán:
 cause đã biết và chưa biết. Không skip test, không nuốt exception.
 
 ## 5. Self-review (người viết ≠ người kiểm)
+Sau pha 4 xanh, chạy liền các bước dưới và pha 6 (commit) + 7 (báo cáo) mà không chờ người dùng nhắc;
+chỉ dừng khi verifier FAIL không tự sửa được, chạm circuit breaker, hoặc cần quyết định của người dùng.
+Người dùng nhận **một** báo cáo cuối.
 - Giao subagent **`devflow:verifier`** kiểm diff so với `.claude/plans/<nhánh>.md` hoặc
   `openspec/changes/<name>/`; prompt chỉ đưa đường dẫn, không chép lại plan. FAIL → sửa, chạy lại
   pha 4, gọi lại verifier.
@@ -90,11 +108,12 @@ cause đã biết và chưa biết. Không skip test, không nuốt exception.
 ## 6. Commit và land (local, không PR; nhánh task không push)
 - Commit bằng `npm run ship` (skill `devflow:ship`). Quyết định còn giá trị ghi vào body commit.
 - Xoá file handoff và file plan (`.claude/plans/<nhánh>.md`) của nhánh trong một commit trước khi land.
-- Chỉ `npm run land` khi người dùng yêu cầu; gate đỏ → skill `devflow:steward`.
+- `npm run land` khi người dùng yêu cầu, hoặc khi plan đã duyệt chọn `auto-land` và đủ điều kiện (pha 2
+  mục 7); gate đỏ → skill `devflow:steward`.
 - `npm run promote` chỉ khi người dùng yêu cầu riêng.
-- Sau khi land, đúng thứ tự: `npm run queue -- done <id>` (task trong queue) → `/opsx:archive` (task
-  OpenSpec, ở phiên mới: dừng, nhắc người dùng) → `ExitWorktree(action="keep")` → từ repo chính
-  `npm run untask -- <nhánh>`.
+- Sau khi land, đúng thứ tự: `npm run queue -- done <id>` (task trong queue) → `ExitWorktree(action="keep")`
+  → từ repo chính `npm run untask -- <nhánh>` → `/opsx:archive` (task OpenSpec, trong subagent context
+  sạch ở worktree `chore/archive-<name>`; skill `devflow:opsx-run` bước 6).
 
 Dừng giữa chừng (hết phiên, chờ người dùng, context sắp đầy) → `/devflow:handoff` trước khi dừng;
 task trong queue thì thêm `npm run queue -- block <id> --reason "..."`.

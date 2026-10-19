@@ -622,7 +622,7 @@
             <article class="guard"><div class="guard-mark">G2</div><h3>Gate trước khi land</h3><p>Lint, test và hard-rules phải xanh. Land theo fast-forward-only để lịch sử thẳng.</p></article>
             <article class="guard"><div class="guard-mark">G3</div><h3>Commit có ngữ nghĩa</h3><p>Conventional Commits, commitlint chạy từ binary local; commit nhỏ trong nhánh, một task land một lần.</p></article>
           </div>
-          <div class="rule-strip"><strong>Luật kết thúc</strong><span>Task nhỏ: <code>land → queue done → untask</code>. Change lớn: <code>land → queue done → /opsx:archive → untask</code> (<code>/opsx:apply</code> và <code>/opsx:archive</code> chạy ở phiên mới). Không archive trước khi code đã vào <code>dev</code>.</span></div>
+          <div class="rule-strip"><strong>Luật kết thúc</strong><span>Task nhỏ: <code>land → queue done → untask</code>. Change lớn: <code>land → queue done → untask → /opsx:archive</code> (<code>/opsx:apply</code> và <code>/opsx:archive</code> chạy trong subagent context sạch qua <code>/devflow:opsx-run</code>; chế độ <code>auto-land</code> tự land khi plan đã duyệt chọn). Không archive trước khi code đã vào <code>dev</code>.</span></div>
         </section>
 
         <section class="finish">

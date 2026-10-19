@@ -72,6 +72,7 @@ Không ghi đè file đã có. OpenSpec là tuỳ chọn (`openspec init --tools
 |---|---|---|
 | Skill | `/devflow:init` | Gắn / cập nhật devflow trong repo |
 | Skill | `/devflow:dev-loop` | Một task qua đủ pha: intake → phân loại → analyze → plan (người duyệt) → implement → verify → self-review → land |
+| Skill | `/devflow:opsx-run` | Chạy trọn một change OpenSpec đã duyệt artifact: worktree → apply (subagent) → check → verifier → review → commit → land theo chế độ `auto-land` / `manual` → archive (subagent) → một báo cáo cuối |
 | Skill | `/devflow:hot-fix-dev` | Fix nhỏ làm thẳng trên checkout `dev` (không worktree) qua `ship --verify --land`; gate vẫn chạy, file lạ của session khác không bị đụng |
 | Skill | `devflow:ship` | Luồng git local qua `scripts/devflow/flow.mjs` |
 | Skill | `devflow:steward` | Gate đỏ, review, những việc không bao giờ làm |
@@ -100,7 +101,7 @@ ESLint từng file (lỗi hoặc tăng cảnh báo so với `dev` → chặn) r�
 Mỗi task: một session + một nhánh + một worktree. Claim bằng `npm run queue -- start T-001 --branch feat/x-y`
 (đánh dấu In progress và tạo worktree; claim trùng bị từ chối). `npm run status` in mỗi worktree task: nhánh,
 `+ahead/-behind` so với `dev`, số file chưa commit, có handoff không, task queue tương ứng, rồi 3 task ready đầu.
-Xong: `land → queue done → (/opsx:archive) → untask`.
+Xong: `land → queue done → untask → (/opsx:archive trong subagent)`.
 
 ## Dọn worktree kẹt
 
