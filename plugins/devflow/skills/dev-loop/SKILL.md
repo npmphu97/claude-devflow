@@ -22,13 +22,17 @@ Repo chưa có `.devflow.json` → đề xuất chạy `/devflow:init` trước.
 
 ## 0.5. Phân loại: OpenSpec hay làm thẳng
 Repo có `openspec/` → áp tiêu chí "OpenSpec: khi nào dùng" trong `CLAUDE.md`, nói kết quả + lý do trong 1 dòng.
-- **Lớn → OpenSpec:** `/opsx:explore` nếu cần làm rõ, rồi
-  `/opsx:propose <tên-change>`. Artifact chính là plan của pha 2 — dừng chờ người duyệt. Sau khi
+- **Lớn → OpenSpec:** `/opsx:explore` nếu cần làm rõ. Trước `/opsx:propose` tạo worktree:
+  `npm run task -- feat/<scope>-<name>`, **không** `EnterWorktree` (như `opsx-run`): chạy `openspec` bằng
+  `cd "<wt>" && openspec ...`, ghi artifact bằng đường dẫn tuyệt đối trong `<wt>`, commit bằng
+  `npm --prefix "<wt>" run ship`. Artifact không bao giờ untracked ở checkout `dev`. Rồi `/opsx:propose <tên-change>`.
+  Artifact chính là plan của pha 2 — dừng chờ người duyệt. Sau khi
   duyệt, agent chạy skill **`devflow:opsx-run <name>`**: worktree → `/opsx:apply` trong subagent context
   sạch (`Agent`, general-purpose) → check → verifier → review → commit → land theo "Chế độ land" →
-  `/opsx:archive` trong subagent → một báo cáo cuối. Người dùng không phải mở phiên mới hay nhắc từng
+  `npm run archive -- <name>` (script; `/opsx:archive` trong subagent khi script từ chối) → một báo cáo cuối. Người dùng không phải mở phiên mới hay nhắc từng
   bước. Subagent không hỏi được người dùng: câu hỏi của nó do phiên chính chuyển, rồi `SendMessage` để
-  nó làm tiếp. Không có công cụ `Agent` (phiên cloud, đang là subagent) → dừng sau khi duyệt, nhắc người
+  nó làm tiếp. Người dùng có thể `/clear` sau khi duyệt artifact rồi gõ `/devflow:opsx-run <name>`: trạng thái nằm trong
+  `openspec/changes/<name>/` và git. Không có công cụ `Agent` (phiên cloud, đang là subagent) → dừng sau khi duyệt, nhắc người
   dùng mở phiên mới và gõ `/opsx:apply <name>`, rồi `/opsx:archive <name>` sau khi land. Pha 3–7 bên dưới là chi tiết của chuỗi đó (task nhỏ đi tay theo các pha này).
 - **Nhỏ → làm thẳng:** tiếp pha 1, plan ngắn gọn trong chat.
 - **Vùng xám:** hỏi người dùng, kèm đề xuất.
@@ -120,8 +124,12 @@ Người dùng nhận **một** báo cáo cuối.
   mục 7); gate đỏ → skill `devflow:steward`.
 - `npm run promote` chỉ khi người dùng yêu cầu riêng.
 - Sau khi land, đúng thứ tự: `npm run queue -- done <id>` (task trong queue) → `ExitWorktree(action="keep")`
-  → từ repo chính `npm run untask -- <nhánh>` → `/opsx:archive` (task OpenSpec, trong subagent context
-  sạch ở worktree `chore/archive-<name>`; skill `devflow:opsx-run` bước 6).
+  → từ repo chính `npm run untask -- <nhánh>` (**bắt buộc**: `land` chạy trong worktree nên không gỡ được chính
+  nó; bỏ sót thì worktree và nhánh nằm lại) → task OpenSpec: `npm run archive -- <name>` (worktree
+  `chore/archive-<name>` → `openspec archive -y` → commit → `check` → `land` → `untask`). Script từ chối (task
+  chưa tick đủ, CLI báo lỗi spec) thì `/opsx:archive` trong subagent context sạch. Task đi bằng
+  `devflow:opsx-run` không phải nhớ bước này: phiên chính ở lại repo chính, bước 6 tự `untask` + `archive`.
+  Báo cáo cuối nêu rõ archive đã xong hay chưa.
 
 Dừng giữa chừng (hết phiên, chờ người dùng, context sắp đầy) → `/devflow:handoff` trước khi dừng;
 task trong queue thì thêm `npm run queue -- block <id> --reason "..."`.

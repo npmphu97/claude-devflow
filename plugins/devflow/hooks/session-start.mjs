@@ -38,6 +38,22 @@ if (branch && branch !== 'HEAD') {
   }
 }
 
+// A change committed to the integration branch with at least one task ticked has landed; while it is still
+// in <openspecDir>/ (not archive/), nobody has archived it yet.
+if (git(['rev-parse', '--verify', '-q', cfg.integrationBranch])) {
+  const dir = cfg.handoff.openspecDir;
+  const pending = [];
+  for (const n of existsSync(join(root, dir)) ? readdirSync(join(root, dir)) : []) {
+    if (n === 'archive') continue;
+    const tasks = git(['show', `${cfg.integrationBranch}:${dir}/${n}/tasks.md`]);
+    const done = (tasks.match(/^\s*- \[x\]/gim) ?? []).length;
+    if (done > 0) pending.push(`${n} (${done}/${(tasks.match(/^\s*- \[[ x]\]/gim) ?? []).length} task)`);
+  }
+  if (pending.length) {
+    console.log(`=== OpenSpec: landed in ${cfg.integrationBranch} but not archived — tell the user; archive with 'npm run archive -- <name>' from the main checkout (if the script refuses, /opsx:archive in a subagent): ${pending.join(', ')} ===`);
+  }
+}
+
 const queue = loadQueue(queueFile(root));
 if (queue.exists) {
   const mine = branch && itemsOf(queue.sections).find(t => t.section === 'In progress' && t.meta?.branch === branch);

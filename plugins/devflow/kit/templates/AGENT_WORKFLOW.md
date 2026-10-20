@@ -23,7 +23,7 @@ mỗi pha có đầu ra rõ ràng và cổng kiểm soát trước khi sang pha 
 | Pha | Vai trò | Agent làm gì | Gate qua pha |
 |---|---|---|---|
 | 0. Intake | PO / BA | Đọc yêu cầu, hỏi lại chỗ mơ hồ, viết acceptance criteria "Khi … thì …" | Có tiêu chí rõ |
-| 0.5. Phân loại | Tech lead | OpenSpec hay làm thẳng (tiêu chí trong CLAUDE.md); OpenSpec: `/opsx:apply` và `/opsx:archive` trong **subagent context sạch** (skill `opsx-run`) | Nói rõ kết quả + lý do |
+| 0.5. Phân loại | Tech lead | OpenSpec hay làm thẳng (tiêu chí trong CLAUDE.md); OpenSpec: propose trong worktree; `/opsx:apply` trong **subagent context sạch**, archive bằng `npm run archive` (skill `opsx-run`) | Nói rõ kết quả + lý do |
 | 1. Analyze | BA + Tech lead | Explore code liên quan, test đang có, nơi dùng chung | Biết file nào bị ảnh hưởng |
 | 2. Plan | Tech lead | Bước + cách kiểm, schema, transaction, dữ liệu cũ, ma trận test, rollback | **Người duyệt** |
 | 3. Implement | Developer | Worktree riêng; task nhỏ lưu plan đã duyệt vào `.claude/plans/<nhánh>.md` cho verifier; commit nhỏ Conventional Commits | Compile sạch |
@@ -68,8 +68,8 @@ Việc đụng dữ liệu production, schema, phân quyền, tiền: **luôn �
 | Bắt đầu task | `/devflow:dev-loop <mô tả>` |
 | Lấy việc tiếp theo từ queue | `npm run queue -- next`, rồi `npm run queue -- start <id> --branch feat/<scope>-<mô-tả>` (claim + worktree) |
 | Ai đang làm gì | `npm run status` |
-| Xong một task | `npm run land` → `npm run queue -- done <id>` → `npm run untask -- <nhánh>` → (`/opsx:archive` trong subagent) |
-| Chạy trọn change OpenSpec đã duyệt | `/devflow:opsx-run <name>` (apply/archive trong subagent, check → verifier → review → commit → land theo chế độ đã chọn) |
+| Xong một task | `npm run land` → `npm run queue -- done <id>` → `npm run untask -- <nhánh>` → (OpenSpec: `npm run archive -- <name>`; script từ chối thì `/opsx:archive` trong subagent) |
+| Chạy trọn change OpenSpec đã duyệt | `/devflow:opsx-run <name>` (apply trong subagent, check → verifier → review → commit → land theo chế độ đã chọn → untask + archive; sau khi duyệt artifact có thể `/clear` rồi chạy) |
 | Tính năng mới cần làm rõ yêu cầu | `/opsx:explore` rồi `/opsx:propose` |
 | Fix nhỏ làm thẳng trên `dev` | `/devflow:hot-fix-dev` |
 | Phiên cloud (nhánh `ccr-*`) xong việc | `npm run cloud-push` (chỉ backup, không land) |

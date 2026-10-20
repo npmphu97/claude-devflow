@@ -500,3 +500,42 @@ describe('worktrees:clean', () => {
     assert.equal(repo.git(['branch', '--list', 'feat/wip']).trim(), '', 'risky branch deleted with --force');
   });
 });
+
+describe('flow: archive', () => {
+  // A stand-in OpenSpec CLI (tracked in the throwaway repo): `archive <name> -y` moves the change under archive/.
+  const FAKE_CLI = `const { renameSync, mkdirSync } = require('node:fs');
+mkdirSync('openspec/changes/archive', { recursive: true });
+renameSync('openspec/changes/' + process.argv[3], 'openspec/changes/archive/' + process.argv[3]);
+`;
+  const repoWith = tasks => mkRepo({
+    // a developer's global excludesFile may ignore these; re-include so the fixture is committed
+    '.gitignore': '!openspec/\n!node_modules/\n',
+    '.devflow.json': JSON.stringify({ ...DEV_FLOW_JSON, linkDirs: [] }),
+    'openspec/changes/foo/tasks.md': tasks,
+    'node_modules/@fission-ai/openspec/bin/openspec.js': FAKE_CLI,
+  });
+
+  it('refuses when a task is not ticked, changing nothing', () => {
+    const repo = repoWith('- [x] one\n- [ ] two\n');
+    const r = repo.run(FLOW, ['archive', '--', 'foo']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr + r.stdout, /1 of 2 task\(s\) not done/);
+    assert.doesNotMatch(repo.git(['worktree', 'list']), /archive-foo/);
+  });
+
+  it('refuses a change that is not in dev', () => {
+    const repo = repoWith('- [x] one\n');
+    const r = repo.run(FLOW, ['archive', '--', 'nope']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr + r.stdout, /not in dev/);
+  });
+
+  it('archives a fully ticked change, lands it in dev and removes the worktree', () => {
+    const repo = repoWith('- [x] one\n- [x] two\n');
+    const r = repo.run(FLOW, ['archive', '--', 'foo']);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(repo.git(['log', 'dev', '--format=%s', '-1']), 'chore(openspec): archive foo');
+    assert.equal(repo.git(['ls-tree', '--name-only', 'dev', 'openspec/changes/foo/tasks.md']), '');
+    assert.doesNotMatch(repo.git(['worktree', 'list']), /archive-foo/);
+  });
+});

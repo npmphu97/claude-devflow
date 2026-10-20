@@ -7,7 +7,7 @@ release (`main`) và tag, do script tự push. Luồng: nhánh `feat/` `fix/` ..
 vào `dev` (`npm run land`, có gate) → fast-forward `dev` vào `main` + tag `vX.Y.Z` (`npm run promote`).
 - Fix nhỏ (≤ ~3 file, không đổi quy tắc / schema) làm thẳng trên checkout `dev` bằng `/devflow:hot-fix-dev`.
 - Mỗi task code dùng skill `/devflow:dev-loop`; mỗi task một worktree (`npm run task -- <nhánh>`, rồi
-  `EnterWorktree(path=...)`); mọi bước git qua skill `devflow:ship` (`npm run ship|check|land|promote|sync|backup|untask`).
+  `EnterWorktree(path=...)`); mọi bước git qua skill `devflow:ship` (`npm run ship|check|land|promote|sync|backup|untask|archive`).
 - Phiên cloud (container tạm, nhánh `ccr-*`): kết thúc bằng `npm run cloud-push` thay vì `git push` (chỉ backup,
   không land). Trên máy: `git fetch <remote> ccr-xxx` → `npm run task` (từ `ccr-xxx`) → `npm run land`.
 - Việc máy làm được thì dùng script: `npm run check` (gate của land, không merge), `npm run hard-rules`
@@ -42,8 +42,10 @@ dữ liệu, URL hoặc lệnh gọi thử, cách dừng. Ví dụ: `npm run dev
 
 <Xoá mục này nếu dự án không dùng OpenSpec.> OpenSpec (`/opsx:propose` → `/opsx:apply` → `/opsx:archive`)
 dành cho thay đổi cần thống nhất yêu cầu trước khi code. Agent **tự phân loại** mọi task, nói kết quả + lý do trong 1 dòng.
-`/opsx:apply` (sau khi duyệt artifact) và `/opsx:archive` (sau khi land) **bắt buộc chạy trong subagent context
-sạch** (công cụ `Agent`), không chạy trong phiên đang chật: context của phiên propose thường đã vài trăm nghìn
+**Propose luôn chạy trong worktree** (`npm run task`, không `EnterWorktree`; lệnh chạy qua `cd "<wt>"`), commit
+artifact trên nhánh đó; không tạo `openspec/changes/<name>/` ở checkout `dev` (sẽ thành untracked kéo dài, và
+làm `land` lỗi đè file). `/opsx:apply` (sau khi duyệt artifact) **bắt buộc chạy trong subagent context
+sạch** (công cụ `Agent`); archive sau land chạy bằng `npm run archive -- <name>`, script từ chối thì `/opsx:archive` cũng trong subagent, không chạy trong phiên đang chật: context của phiên propose thường đã vài trăm nghìn
 token, mỗi lượt gọi đọc lại toàn bộ. Agent tự giao việc, người dùng không phải mở phiên mới. Subagent hỏi/dừng
 thì phiên chính chuyển câu hỏi cho người dùng rồi `SendMessage` tiếp. Chạy trọn change đã duyệt artifact:
 `/devflow:opsx-run <name>`.
@@ -117,8 +119,9 @@ Luật nào máy kiểm được thì thêm vào `rules` của `.devflow.json` (
 
 - Resume task nhiều phiên: `/devflow:handoff` (tối đa ~30 dòng, commit trên nhánh). Xoá ghi chú trước
   khi land; quyết định còn giá trị chuyển vào body commit (hoặc `design.md` với OpenSpec).
-- Plan (plan mode, phân tích / đề xuất trước khi code) lưu ở `.claude/plans/` của repo (`plansDirectory` trong
-  `.claude/settings.json`), không ở `~/.claude/plans/`. Tên file kebab-case mô tả nội dung. Task nhỏ: sau
+- Bản nháp plan (plan mode, phân tích / đề xuất trước khi code) lưu ở `.claude/plans-draft/` của repo
+  (`plansDirectory` trong `.claude/settings.json`, gitignored), không ở `~/.claude/plans/`; `.claude/plans/` chỉ
+  chứa plan đã duyệt theo nhánh. Task nhỏ: sau
   khi duyệt, chép đúng bản đã duyệt vào `.claude/plans/<nhánh>.md` trong worktree (commit trên nhánh,
   verifier đọc file này, xoá trước khi land như handoff).
 - Không viết changelog riêng: `npm run promote` sinh release notes từ commit vào annotated tag.
