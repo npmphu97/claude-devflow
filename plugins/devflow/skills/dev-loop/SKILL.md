@@ -105,6 +105,14 @@ Người dùng nhận **một** báo cáo cuối.
 - `/simplify` trên diff (gọn hoá, bỏ phần thừa), rồi `/code-review high`; `/security-review` nếu đụng auth, phân quyền, endpoint mới, upload, xử lý dữ liệu thật.
 - Chỉ sửa finding ảnh hưởng đúng / sai hoặc yêu cầu; finding kiểu "nên thêm cho chắc" thì bỏ qua.
 
+**Luật review (áp dụng cho cả `/code-review` và `/security-review`):**
+1. **Tối đa 3 vòng.** Sau vòng 3 mà còn finding → dừng, gửi người dùng danh sách còn lại để duyệt; không tự lặp tiếp.
+2. **Chỉ review diff mới.** Vòng 1 review cả diff nhánh; vòng 2–3 chỉ review `git diff <commit-vòng-trước>..HEAD`.
+3. **Gom bug theo loại** (logic, transaction/DB, phân quyền, thiếu test, style); sửa cả nhóm trong một
+   commit rồi mới review lại, không sửa lẻ từng finding.
+4. **Không báo lại bug cũ.** Finding đã sửa, hoặc đã bỏ qua có lý do, không báo lại ở vòng sau; ghi danh
+   sách đã xử lý ở vòng 1 và đối chiếu.
+
 ## 6. Commit và land (local, không PR; nhánh task không push)
 - Commit bằng `npm run ship` (skill `devflow:ship`). Quyết định còn giá trị ghi vào body commit.
 - Xoá file handoff và file plan (`.claude/plans/<nhánh>.md`) của nhánh trong một commit trước khi land.

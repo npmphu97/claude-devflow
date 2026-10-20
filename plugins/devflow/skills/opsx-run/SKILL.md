@@ -36,7 +36,8 @@ trả về: số task xong/tổng, kết quả `check`, câu hỏi cần ngườ
 3. Subagent `devflow:verifier` kiểm diff so với `openspec/changes/<name>/` (prompt chỉ đưa đường dẫn). FAIL →
    sửa, quay lại bước 1. Được miễn khi mọi file đổi nằm trong `.claude/`, `docs/` hoặc là `.md`.
 4. `/code-review high`; thêm `/security-review` nếu đụng auth / phân quyền / endpoint mới / xử lý dữ liệu thật.
-   Chỉ sửa finding ảnh hưởng đúng/sai hoặc yêu cầu.
+   Chỉ sửa finding ảnh hưởng đúng/sai hoặc yêu cầu. Theo "Luật review" của `dev-loop` pha 5:
+   tối đa 3 vòng, còn finding thì dừng và báo người dùng duyệt.
 
 ## 4. Commit
 Xoá handoff của change (nếu có) và commit bằng `npm run ship` (skill `devflow:ship`; message vào file, `-F`).

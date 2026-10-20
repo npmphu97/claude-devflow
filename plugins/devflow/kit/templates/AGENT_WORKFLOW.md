@@ -45,6 +45,8 @@ mỗi pha có đầu ra rõ ràng và cổng kiểm soát trước khi sang pha 
 3. Không "fix" bằng `try/catch` nuốt lỗi; tìm root cause và ghi vào message commit.
 4. Chạm dữ liệu production (data-tool, SQL tay) → luôn dừng chờ người duyệt.
 5. Task phình quá phạm vi → dừng, đề xuất tách task mới.
+6. Review quá 3 vòng mà còn finding → dừng, báo người dùng danh sách còn lại để duyệt. Từ vòng 2 chỉ review
+   diff mới; gom finding theo loại, sửa một commit mỗi nhóm; không báo lại bug cũ.
 
 ## Thang tin cậy (autonomy slider)
 
