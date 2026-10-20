@@ -51,6 +51,7 @@ tự thêm cờ này.
 | `npm run cloud-push` | Chỉ phiên cloud: push nhánh `ccr-*` hiện tại lên remote làm backup (chạy `hard-rules` trước, không force, từ chối `dev`/`main`/nhánh khác). Không land. |
 | `npm run backup` | Push `dev`, `main`, mọi tag — chạy lại khi lần push tự động trước bị lỗi. |
 | `npm run untask -- <nhánh>` | Gỡ worktree của task an toàn (từ repo chính); xoá nhánh nếu `dev` đã chứa nó. |
+| `npm run archive -- <change> [--no-land]` | Chạy từ repo chính, change đã land vào `dev` và tick đủ task: worktree `chore/archive-<change>` → `openspec archive -y` → commit → `check` → `land` → `untask`. Từ chối (không đổi gì) khi task chưa đủ hoặc CLI báo lỗi spec → dùng `/opsx:archive`. `--no-land` dừng sau commit. |
 | `npm run status` | Ai đang làm gì: mỗi worktree task → nhánh, +ahead/-behind so với `dev`, số file chưa commit, có handoff không, task queue tương ứng; claim mồ côi; 3 task ready đầu. Chỉ đọc. |
 | `npm run doctor` | Kiểm tra repo sẵn sàng cho vòng devflow: nhánh `dev`/`main`, git identity, vùng gate (đường dẫn, eslint, lệnh), commitlint, hook `.husky/commit-msg` có executable. |
 | `npm run devflow-test` | Tự test các script của plugin (`node --test`) — guard rules, vòng task→promote, hard-rules, doctor. |

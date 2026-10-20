@@ -55,11 +55,11 @@ quyết định, rồi:
 |---|---|
 | `scripts/devflow/*.mjs` | Script vendor vào dự án (gate chạy cả khi không có Claude, khoá version theo dự án) |
 | `.devflow.json` | Cấu hình: nhánh, remote sao lưu, vùng gate (dò từ `package.json`, `pom.xml`, Gradle, Python, Go, Rust, .NET), luật cứng |
-| `package.json` | `npm run task / ship / check / land / promote / sync / backup / cloud-push / untask / worktrees:clean / hard-rules / retro / handoff / queue / status / doctor / devflow-test` |
+| `package.json` | `npm run task / ship / check / land / promote / sync / backup / cloud-push / untask / archive / worktrees:clean / hard-rules / retro / handoff / queue / status / doctor / devflow-test` |
 | `CLAUDE.md` | Section quy trình (OpenSpec khi nào, bảng ví dụ, thiết kế test, luật cứng, bài học) giữa `<!-- devflow:start/end -->` |
 | `docs/AGENT_WORKFLOW.md` | Các pha, circuit breaker, thang tin cậy |
 | `.claude/task-queue.md` | Hàng đợi việc chung (skill `/devflow:queue`): In progress / Ready / Waiting / Done. Ở main checkout, gitignore — mọi worktree dùng chung một bản |
-| `.claude/settings.json` | `plansDirectory` = `.claude/plans` (plan nằm trong repo, không ở `~/.claude/plans/`) + `permissions.allow` cho các lệnh local an toàn (`npm run check / ship / task / queue / status ...`; không gồm `land` / `promote`). Có file rồi → chỉ in gợi ý |
+| `.claude/settings.json` | `plansDirectory` = `.claude/plans-draft` (bản nháp plan nằm trong repo, gitignored, không ở `~/.claude/plans/`; `.claude/plans/` chỉ chứa plan đã duyệt theo nhánh) + `permissions.allow` cho các lệnh local an toàn (`npm run check / ship / task / queue / status ...`; không gồm `land` / `promote`). Có file rồi → chỉ in gợi ý |
 | `.gitignore` | `.claude/worktrees/`, `.claude/task-queue.md*`; tự re-include `CLAUDE.md`, `.claude/`, `openspec/` nếu global excludesFile đang ignore chúng |
 | `commitlint.config.cjs`, `.husky/commit-msg` | Conventional Commits |
 | nhánh `dev` | Tạo từ `main` khi chọn `--create-dev` |
@@ -72,7 +72,7 @@ Không ghi đè file đã có. OpenSpec là tuỳ chọn (`openspec init --tools
 |---|---|---|
 | Skill | `/devflow:init` | Gắn / cập nhật devflow trong repo |
 | Skill | `/devflow:dev-loop` | Một task qua đủ pha: intake → phân loại → analyze → plan (người duyệt) → implement → verify → self-review (tối đa 3 vòng, từ vòng 2 chỉ review diff mới, gom finding theo loại) → land |
-| Skill | `/devflow:opsx-run` | Chạy trọn một change OpenSpec đã duyệt artifact: worktree → apply (subagent) → check → verifier → review → commit → land theo chế độ `auto-land` / `manual` → archive (subagent) → một báo cáo cuối |
+| Skill | `/devflow:opsx-run` | Chạy trọn một change OpenSpec đã duyệt artifact: worktree → apply (subagent) → check → verifier → review → commit → land theo chế độ `auto-land` / `manual` → untask + `npm run archive` → một báo cáo cuối. Phiên chính ở lại repo chính (lệnh trong worktree chạy bằng `npm --prefix`), nên sau khi duyệt artifact có thể `/clear` rồi chạy |
 | Skill | `/devflow:hot-fix-dev` | Fix nhỏ làm thẳng trên checkout `dev` (không worktree) qua `ship --verify --land`; gate vẫn chạy, file lạ của session khác không bị đụng |
 | Skill | `devflow:ship` | Luồng git local qua `scripts/devflow/flow.mjs` |
 | Skill | `devflow:steward` | Gate đỏ, review, những việc không bao giờ làm |
@@ -101,7 +101,7 @@ ESLint từng file (lỗi hoặc tăng cảnh báo so với `dev` → chặn) r�
 Mỗi task: một session + một nhánh + một worktree. Claim bằng `npm run queue -- start T-001 --branch feat/x-y`
 (đánh dấu In progress và tạo worktree; claim trùng bị từ chối). `npm run status` in mỗi worktree task: nhánh,
 `+ahead/-behind` so với `dev`, số file chưa commit, có handoff không, task queue tương ứng, rồi 3 task ready đầu.
-Xong: `land → queue done → untask → (/opsx:archive trong subagent)`.
+Xong: `land → queue done → untask → (OpenSpec: npm run archive -- <name>; script từ chối thì /opsx:archive trong subagent)`.
 
 ## Dọn worktree kẹt
 

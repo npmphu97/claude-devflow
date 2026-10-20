@@ -137,6 +137,7 @@ write('.devflow.json', `${JSON.stringify(config, null, 2)}\n`);
 const SCRIPTS = {
   task: 'node scripts/devflow/flow.mjs task',
   untask: 'node scripts/devflow/flow.mjs untask',
+  archive: 'node scripts/devflow/flow.mjs archive',
   ship: 'node scripts/devflow/flow.mjs ship',
   check: 'node scripts/devflow/flow.mjs check',
   land: 'node scripts/devflow/flow.mjs land',
@@ -199,6 +200,8 @@ for (const [probe, line] of [['CLAUDE.md', '!CLAUDE.md'], ['.claude/handoff/READ
 if (!/^(\*\*\/)?\/?\.claude\/worktrees\/?$/m.test(gi)) lines.push('**/.claude/worktrees/');
 // The task queue is one shared file in the main checkout, never committed (queue-lib.mjs).
 if (!/task-queue\.md/.test(gi)) lines.push('**/.claude/task-queue.md*');
+// Plan-mode drafts (plansDirectory) are scratch; only the approved per-branch plan in .claude/plans/ is committed.
+if (!/plans-draft/.test(gi)) lines.push('**/.claude/plans-draft/');
 if (lines.some(l => l === '!.claude/') && !/settings\.local\.json/.test(gi)) lines.push('**/.claude/settings.local.json*');
 if (!lines.length) did('kept', '.gitignore (already fine)');
 else {
@@ -216,7 +219,7 @@ const settingsFile = join(root, '.claude', 'settings.json');
 if (existsSync(settingsFile)) {
   const missing = ALLOW.filter(a => !readJson(settingsFile)?.permissions?.allow?.includes(a));
   did('kept', `.claude/settings.json (exists${missing.length ? ` — consider adding to permissions.allow: ${missing.join(', ')}` : ', allowlist already there'})`);
-} else write('.claude/settings.json', `${JSON.stringify({ plansDirectory: '.claude/plans', permissions: { allow: ALLOW } }, null, 2)}\n`);
+} else write('.claude/settings.json', `${JSON.stringify({ plansDirectory: '.claude/plans-draft', permissions: { allow: ALLOW } }, null, 2)}\n`);
 
 const commitlintFiles = ['commitlint.config.js', 'commitlint.config.cjs', 'commitlint.config.mjs', 'commitlint.config.ts', '.commitlintrc', '.commitlintrc.json', '.commitlintrc.yml', '.commitlintrc.js'];
 if (commitlintFiles.some(f => existsSync(join(root, f)))) did('kept', 'commitlint config (exists)');

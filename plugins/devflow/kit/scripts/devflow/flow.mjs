@@ -8,6 +8,7 @@
 //   sync     delete local branches already contained in the integration branch
 //   backup   push integration/release branches + tags to the backup remote
 //   untask   remove a task worktree safely
+//   archive  archive a landed OpenSpec change (worktree → openspec archive → commit → land → untask)
 //   status   who works on what: task worktrees (ahead/behind, dirty, handoff) + queue, read-only
 // The local clone is the source of truth: no PR, no CI. Integration/release branches only move by
 // fast-forward and are pushed to the remote as a backup; task branches are never pushed.
@@ -740,6 +741,79 @@ function sync() {
   if (stale.length) console.log(`\n  Landed cloud branches still on ${remote} — delete by hand: git push ${remote} --delete ${stale.join(' ')}`);
 }
 
+// ---------- archive: archive an already-landed OpenSpec change, end to end ----------
+
+const CHANGE_NAME = /^[a-z0-9][a-z0-9-]*$/;
+
+/** Run `node <args>` inside worktree `cwd` (skipped under --dry-run); true on success. */
+function nodeIn(cwd, args) {
+  console.log(`  ${dryRun ? '[dry-run] ' : '$ '}(in ${cwd}) node ${args.join(' ')}`);
+  if (dryRun) return true;
+  return spawnSync(process.execPath, args, { cwd, stdio: 'inherit' }).status === 0;
+}
+
+/** `openspec archive <name> -y` inside worktree `wt`: the CLI linked from node_modules, else the one on PATH. */
+function openspecArchive(wt, name) {
+  const local = join(wt, 'node_modules', '@fission-ai', 'openspec', 'bin', 'openspec.js');
+  if (existsSync(local)) return nodeIn(wt, [local, 'archive', name, '-y']);
+  console.log(`  ${dryRun ? '[dry-run] ' : '$ '}(in ${wt}) openspec archive ${name} -y`);
+  if (dryRun) return true;
+  return spawnSync('openspec', ['archive', name, '-y'], { cwd: wt, stdio: 'inherit', shell: isWin }).status === 0;
+}
+
+/** Throw away a just-created task worktree whose branch holds nothing: revert the tree, then untask. */
+function discardTask(branch, wt) {
+  exec('git', ['-C', wt, 'checkout', '--', '.'], { allowFail: true });
+  exec('git', ['-C', wt, 'clean', '-fd'], { allowFail: true });
+  untask({ paths: [branch] });
+}
+
+/** From the main checkout: worktree chore/archive-<name> from DEV → `openspec archive -y` → commit → land →
+ * untask. Refuses (before touching anything) unless the change is in DEV with every task ticked; when the
+ * OpenSpec CLI itself refuses (e.g. spec conflict) the worktree is discarded and the caller falls back to
+ * the interactive /opsx:archive skill. --no-land stops after the commit, leaving the worktree. */
+function archive(opts) {
+  const name = opts.paths[0];
+  if (!name || !CHANGE_NAME.test(name)) die(`usage: ${hint('archive')} -- <change-name> [--no-land]`);
+  if (!isMainWorktree()) die('run archive from the main checkout, not from inside a task worktree.');
+  requireBranch(DEV);
+  const dir = cfg.handoff.openspecDir;
+  const tasks = git(['show', `${DEV}:${dir}/${name}/tasks.md`], { allowFail: true });
+  if (tasks === null) die(`${dir}/${name}/tasks.md is not in ${DEV} — land the change first, or it is already archived.`);
+  const total = (tasks.match(/^\s*- \[[ xX]\]/gm) ?? []).length;
+  const open = (tasks.match(/^\s*- \[ \]/gm) ?? []).length;
+  if (total === 0 || open > 0) {
+    die(`${name}: ${open} of ${total} task(s) not done — not archiving automatically. Use /opsx:archive (it asks what to do).`);
+  }
+
+  const branch = `chore/archive-${name}`;
+  const wt = join(REPO_ROOT, ...cfg.worktreeDir.split('/'), branch.replace(/\//g, '-'));
+  task({ paths: [branch] });
+  const flow = fileURLToPath(import.meta.url);
+
+  step(`openspec archive ${name}`);
+  if (!openspecArchive(wt, name)) {
+    if (!dryRun) discardTask(branch, wt);
+    die(`openspec archive refused ${name} (worktree discarded, nothing changed). Use /opsx:archive.`);
+  }
+  if (!dryRun && !git(['-C', wt, 'status', '--porcelain', '--', dir])) {
+    discardTask(branch, wt);
+    die(`openspec archive changed nothing for ${name} (already archived?). Worktree discarded.`);
+  }
+  step('commit the archive');
+  if (!nodeIn(wt, [flow, 'ship', '-m', `chore(openspec): archive ${name}`,
+    '-m', 'Archived with the devflow archive command (openspec archive -y); delta specs synced to main specs.', dir])) {
+    die(`ship failed in ${wt}; fix there, or: ${hint('untask')} -- ${branch}`);
+  }
+  if (opts.flags.has('no-land')) return console.log(`\n  ✔ committed on ${branch} (worktree ${wt}). Next: land from that worktree, then untask.`);
+
+  step('land the archive');
+  if (!nodeIn(wt, [flow, 'land'])) die(`land failed (gate red?): the archive is committed on ${branch} in ${wt}. Fix there (skill steward), land, then untask.`);
+  if (dryRun) return console.log(`  [dry-run] untask ${branch}`);
+  untask({ paths: [branch] });
+  console.log(`\n  ✔ ${name} archived and landed in ${DEV}; worktree removed.`);
+}
+
 // ---------- main ----------
 
 const [command, ...rest] = process.argv.slice(2);
@@ -761,6 +835,7 @@ switch (command) {
   case 'status': status(); break;
   case 'task': task(opts); break;
   case 'untask': untask(opts); break;
+  case 'archive': archive(opts); break;
   default:
     console.log(`Usage (add --dry-run to any command to only print mutating steps):
   ship -- (-m "feat(scope): subject" [-m "body"] | -F msg.txt) [--verify] [--land] [--promote] [--shared-ok] [--no-cache] <file>...
@@ -773,6 +848,7 @@ switch (command) {
   status                   who works on what: task worktrees vs ${DEV} + top ready queue tasks
   doctor                   check the repo is ready for the devflow loop (branches, gate tooling, hooks)
   task -- <type>/<desc>    new worktree from ${DEV} for one task/session
-  untask -- <branch>       remove that worktree safely (run from the main checkout)`);
+  untask -- <branch>       remove that worktree safely (run from the main checkout)
+  archive -- <change> [--no-land]  main checkout: archive a landed OpenSpec change, land it, untask`);
     process.exit(command && command !== 'help' ? 1 : 0);
 }
