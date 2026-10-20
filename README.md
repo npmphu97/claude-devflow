@@ -71,7 +71,7 @@ Không ghi đè file đã có. OpenSpec là tuỳ chọn (`openspec init --tools
 | Loại | Tên | Vai trò |
 |---|---|---|
 | Skill | `/devflow:init` | Gắn / cập nhật devflow trong repo |
-| Skill | `/devflow:dev-loop` | Một task qua đủ pha: intake → phân loại → analyze → plan (người duyệt) → implement → verify → self-review → land |
+| Skill | `/devflow:dev-loop` | Một task qua đủ pha: intake → phân loại → analyze → plan (người duyệt) → implement → verify → self-review (tối đa 3 vòng, từ vòng 2 chỉ review diff mới, gom finding theo loại) → land |
 | Skill | `/devflow:opsx-run` | Chạy trọn một change OpenSpec đã duyệt artifact: worktree → apply (subagent) → check → verifier → review → commit → land theo chế độ `auto-land` / `manual` → archive (subagent) → một báo cáo cuối |
 | Skill | `/devflow:hot-fix-dev` | Fix nhỏ làm thẳng trên checkout `dev` (không worktree) qua `ship --verify --land`; gate vẫn chạy, file lạ của session khác không bị đụng |
 | Skill | `devflow:ship` | Luồng git local qua `scripts/devflow/flow.mjs` |

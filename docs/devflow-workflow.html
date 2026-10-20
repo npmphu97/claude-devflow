@@ -449,7 +449,7 @@
             <article class="step"><span class="step-num">03</span><h3>Claim</h3><p>Một lệnh: đánh dấu In progress và tạo branch/worktree riêng. Nhận trùng sẽ bị từ chối.</p><code>queue start --branch</code></article>
             <article class="step"><span class="step-num">04</span><h3>Plan</h3><p>Task nhỏ plan trong chat; change lớn dùng OpenSpec.</p><code>proposal → tasks</code></article>
             <article class="step"><span class="step-num">05</span><h3>Build</h3><p>Code theo lát nhỏ, commit nhỏ trong nhánh; cả nhánh land một lần.</p><code>feat: / fix:</code></article>
-            <article class="step"><span class="step-num">06</span><h3>Verify</h3><p>Ship, check và chạy gate thay cho niềm tin cảm tính.</p><code>ship → check</code></article>
+            <article class="step"><span class="step-num">06</span><h3>Verify</h3><p>Ship, check và chạy gate thay cho niềm tin cảm tính. Review tối đa 3 vòng, từ vòng 2 chỉ xem diff mới.</p><code>ship → check → review</code></article>
             <article class="step final"><span class="step-num">07</span><h3>Land, close &amp; untask</h3><p>Fast-forward vào <code>dev</code>, đóng queue, archive change nếu có rồi gỡ worktree bằng luồng chuẩn.</p><code>land → done → archive → untask</code></article>
           </div>
         </section>
