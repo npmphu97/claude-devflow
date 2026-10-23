@@ -228,7 +228,7 @@
       overflow: hidden;
       box-shadow: var(--shadow);
     }
-    .tabs { display: grid; grid-template-columns: 1fr 1fr; padding: 8px; gap: 8px; background: var(--surface-2); }
+    .tabs { display: grid; grid-template-columns: repeat(3, 1fr); padding: 8px; gap: 8px; background: var(--surface-2); }
     .tab {
       border: 0;
       background: transparent;
@@ -457,13 +457,23 @@
         <section id="task-types">
           <div class="section-no">02 / ROUTING</div>
           <h2 class="section-title">Chọn độ sâu, không đổi nguyên tắc</h2>
-          <p class="lede">Bấm để xem đường đi phù hợp. Task lớn thêm lớp spec; còn queue, worktree, gate và land vẫn giữ nguyên.</p>
+          <p class="lede">Bấm để xem đường đi phù hợp. <code>dev-loop</code> chọn cỡ S / M / L trước tiên; cỡ lớn thêm plan và spec, còn gate và land vẫn giữ nguyên.</p>
           <div class="decision">
             <div class="tabs" role="tablist" aria-label="Loại task">
-              <button class="tab" role="tab" id="tab-small" aria-controls="panel-small" aria-selected="true" data-target="panel-small">Task nhỏ<small>Ít file · phạm vi rõ · không cần OpenSpec</small></button>
-              <button class="tab" role="tab" id="tab-large" aria-controls="panel-large" aria-selected="false" data-target="panel-large">Change lớn<small>Nhiều phần · cần thiết kế · có dependency</small></button>
+              <button class="tab" role="tab" id="tab-tiny" aria-controls="panel-tiny" aria-selected="true" data-target="panel-tiny">Cỡ S<small>Tả diff trong một câu · ≤ ~3 file</small></button>
+              <button class="tab" role="tab" id="tab-small" aria-controls="panel-small" aria-selected="false" data-target="panel-small">Cỡ M<small>Phạm vi rõ · không cần OpenSpec</small></button>
+              <button class="tab" role="tab" id="tab-large" aria-controls="panel-large" aria-selected="false" data-target="panel-large">Cỡ L<small>Nhiều phần · cần thiết kế · có dependency</small></button>
             </div>
-            <div class="panel active" id="panel-small" role="tabpanel" aria-labelledby="tab-small">
+            <div class="panel active" id="panel-tiny" role="tabpanel" aria-labelledby="tab-tiny">
+              <div class="route">
+                <div class="route-item"><b>1. Một dòng</b><span>Sửa gì, ở đâu, kiểm bằng gì</span></div>
+                <div class="route-item"><b>2. Sửa</b><span>Trên <code>dev</code> qua hot-fix-dev, hoặc worktree</span></div>
+                <div class="route-item"><b>3. Check</b><span>Cùng gate với land</span></div>
+                <div class="route-item"><b>4. Land</b><span>Khi người dùng gật đầu</span></div>
+              </div>
+              <p class="panel-note"><strong>Không plan mode, không file plan.</strong> Verifier chỉ khi đụng logic. Chạm quy tắc nghiệp vụ, schema hay API thì lên cỡ M / L.</p>
+            </div>
+            <div class="panel" id="panel-small" role="tabpanel" aria-labelledby="tab-small" hidden>
               <div class="route">
                 <div class="route-item"><b>1. Queue</b><span>Một dòng mô tả là đủ</span></div>
                 <div class="route-item"><b>2. Claim</b><span>Branch + worktree riêng</span></div>
@@ -622,6 +632,9 @@
             <article class="guard"><div class="guard-mark">G1</div><h3>Không phá protected branch</h3><p>Chặn checkout cưỡng bức, merge tay và reset hard trên nhánh được bảo vệ.</p></article>
             <article class="guard"><div class="guard-mark">G2</div><h3>Gate trước khi land</h3><p>Lint, test và hard-rules phải xanh. Land theo fast-forward-only để lịch sử thẳng.</p></article>
             <article class="guard"><div class="guard-mark">G3</div><h3>Commit có ngữ nghĩa</h3><p>Conventional Commits, commitlint chạy từ binary local; commit nhỏ trong nhánh, một task land một lần.</p></article>
+            <article class="guard"><div class="guard-mark">G4</div><h3>Chưa check thì chưa xong</h3><p>Hook Stop (<code>stopGate</code>): trên nhánh task, agent không kết thúc lượt khi nội dung hiện tại chưa qua <code>check</code>. Cache theo nội dung nên chỉ tốn một lần.</p></article>
+            <article class="guard"><div class="guard-mark">G5</div><h3>Format ngay khi sửa</h3><p>Hook PostToolUse chạy formatter của vùng (<code>areas[].format</code>) trên file vừa sửa, nên format không bao giờ tới gate hay reviewer.</p></article>
+            <article class="guard"><div class="guard-mark">G6</div><h3>Chứng minh trên app thật</h3><p>Skill <code>verify-app</code> của dự án (tạo bằng <code>/devflow:verify-setup</code>) chạy app, kiểm tính năng bị chạm và trả bằng chứng. Bài học mỗi task đi lên tầng cao nhất: rule › lint/test › skill › CLAUDE.md.</p></article>
           </div>
           <div class="rule-strip"><strong>Luật kết thúc</strong><span>Task nhỏ: <code>land → queue done → untask</code>. Change lớn: <code>land → queue done → untask → npm run archive -- &lt;change&gt;</code> (script từ chối thì <code>/opsx:archive</code> trong subagent). <code>/devflow:opsx-run</code> làm trọn chuỗi từ phiên chính ở lại repo chính — <code>/opsx:apply</code> chạy trong subagent context sạch, lệnh trong worktree qua <code>npm --prefix</code>, sau khi duyệt artifact có thể <code>/clear</code> rồi chạy; chế độ <code>auto-land</code> tự land khi plan đã duyệt chọn. Không archive trước khi code đã vào <code>dev</code>.</span></div>
         </section>
