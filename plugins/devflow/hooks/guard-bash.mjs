@@ -2,10 +2,11 @@
 // PreToolUse guard for Bash / PowerShell: turns devflow's hard rules into deterministic blocks.
 // Exit 2 blocks the command and shows stderr to the agent. Only active in repos with a .devflow.json,
 // so installing the plugin never changes behaviour in other projects.
-// The match rules live in guard-rules.mjs (pure, unit-tested); this file only wires stdin/config.
+// The match rules live in kit/scripts/devflow/guard-rules.mjs (pure, unit-tested, vendored with the scripts so
+// `npm run devflow-test` runs them in a project too); this file only wires stdin/config.
 import { spawnSync } from 'node:child_process';
 import { repoRoot, loadConfig } from '../kit/scripts/devflow/config.mjs';
-import { checkCommand } from './guard-rules.mjs';
+import { checkCommand } from '../kit/scripts/devflow/guard-rules.mjs';
 
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
