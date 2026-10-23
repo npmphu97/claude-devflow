@@ -7,7 +7,7 @@ description: Run a whole OpenSpec change whose artifacts are already approved �
 
 Điều phối pha 3–7 của `devflow:dev-loop` cho một change OpenSpec **đã duyệt artifact**, để người dùng chỉ
 duyệt artifact rồi nhận một báo cáo cuối. Chạy ở **phiên chính** (subagent không gọi lồng được subagent).
-Lý do dùng subagent cho apply: xem mục OpenSpec trong `CLAUDE.md`.
+Lý do dùng subagent cho apply: mục "Cỡ L" trong `reference.md` của skill `dev-loop`.
 
 **Phiên chính ở lại repo chính suốt chuỗi, không `EnterWorktree`.** Lệnh chạy trong worktree `<wt>` bằng
 `npm --prefix "<wt>" run <script>` hoặc `git -C "<wt>"`; nhờ vậy sau land, `untask` và archive chạy thẳng từ
@@ -43,6 +43,7 @@ trả về: số task xong/tổng, kết quả `check`, câu hỏi cần ngườ
    Subagent apply vừa xanh trên cùng nội dung → gate in "already passed", không chạy lại. Đỏ → sửa root cause theo `devflow:steward`; **tối đa 2 vòng** cho cùng một
    lỗi (circuit breaker của `dev-loop` pha 4), quá thì dừng và báo.
 2. Test không nằm trong gate mà thay đổi chạm tới (integration cần DB, E2E...) → chạy thêm theo CLAUDE.md.
+   Thay đổi người dùng thấy được → skill `verify-app` của dự án trên `<wt>` (chưa có → như `dev-loop` pha 4).
 3. Subagent `devflow:verifier` kiểm diff so với `openspec/changes/<name>/` (prompt chỉ đưa đường dẫn). FAIL →
    sửa, quay lại bước 1. Được miễn khi mọi file đổi nằm trong `.claude/`, `docs/` hoặc là `.md`.
 4. `/code-review high`; thêm `/security-review` nếu đụng auth / phân quyền / endpoint mới / xử lý dữ liệu thật.
@@ -86,7 +87,7 @@ Lỗi do chính spec (vd. thiếu scenario) thì sửa spec trong một commit r
 ## 7. Báo cáo cuối
 Một báo cáo theo `dev-loop` pha 7: task xong/tổng, lệnh + dòng kết quả thật (`check`, test, verifier),
 "Thay đổi DB" nếu có, SHA mới của `dev`, trạng thái backup remote, archive đã xong chưa, việc người cần
-làm (UAT, `promote`, migration production, data-tool).
+làm (UAT, `promote`, migration production, data-tool), và đề xuất bài học theo `dev-loop` pha 8 nếu có.
 
 ## Dừng và báo người dùng khi
 Verifier FAIL không tự sửa được · chạm circuit breaker · rebase conflict khi land · gate đỏ không rõ

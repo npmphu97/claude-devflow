@@ -15,7 +15,8 @@ commit trực tiếp: `ship` ở `dev` tự tạo nhánh từ header commit, `--
 - `fix` đưa hành vi về đúng như đã định (không đổi quy tắc nghiệp vụ), hoặc chỉnh UI nhỏ (nhãn, màu,
   căn lề, thông báo lỗi), hoặc `docs` / `chore` / `style` không đổi hành vi.
 - Khu trú ≤ ~3 file, nguyên nhân đã rõ sau khi đọc code (không phải đoán).
-- Không chạm tiêu chí OpenSpec trong `CLAUDE.md` (schema, phân quyền, tiền, API contract, data-tool...).
+- Là cỡ **S** của `dev-loop` (tả được diff trong một câu); không chạm tiêu chí OpenSpec (`reference.md` của skill
+  `dev-loop`: schema, phân quyền, tiền, API contract, data-tool...).
 - Không phải bug logic cần bảng ví dụ đầu vào → đầu ra. Bug logic phải có test tái hiện trước khi sửa:
   dùng `dev-loop`.
 
@@ -29,7 +30,7 @@ Giữa chừng phát hiện chạm điều kiện trên → dừng, báo ngườ
    (`npm run task`). Không thêm `--shared-ok`.
 2. **Nói 1 dòng:** nguyên nhân + file sẽ sửa + vì sao đủ điều kiện hot-fix.
 3. **Sửa tối thiểu** theo "Cách viết thay đổi" của `CLAUDE.md`; nếu có thể thì thêm test ở đúng tầng lỗi
-   (theo mục "Thiết kế test"), không xoá / skip test.
+   (ma trận test trong `reference.md` của skill `dev-loop`), không xoá / skip test.
 4. **Verify trước khi commit:** `npm run check` (cùng gate của land). Đỏ → sửa root cause theo skill
    `devflow:steward`, không lách.
 5. **Verifier:** gọi subagent `devflow:verifier` khi fix chạm >1 file hoặc logic; được bỏ (phải nói rõ
@@ -50,7 +51,8 @@ Giữa chừng phát hiện chạm điều kiện trên → dừng, báo ngườ
    khác không bị đụng. Gate đỏ → commit nằm trên nhánh/worktree tạm (checkout chính không còn các sửa
    đổi đó): sửa tiếp ở worktree theo `devflow:steward`.
 7. **Báo cáo ngắn:** nguyên nhân, file đổi, kết quả `check`, SHA mới của `dev`, `dev` đã backup lên
-   remote chưa (nếu `backup push failed` → báo, `npm run backup` sau).
+   remote chưa (nếu `backup push failed` → báo, `npm run backup` sau). Có bài học đáng giữ → đề xuất theo
+   `dev-loop` pha 8.
 
 ## Không bao giờ
 

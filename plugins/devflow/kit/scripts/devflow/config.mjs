@@ -21,8 +21,12 @@ export const DEFAULTS = {
   // "auto": run commitlint in the gate when node_modules/@commitlint/cli exists; true: required; false: off.
   commitlint: 'auto',
   // Gate areas: files under `paths` trigger the area's eslint delta check and commands.
-  // { name, paths: ["frontend/"], eslint?: { cwd, extensions }, commands: [{ label, cwd, run, runWin? }] }
+  // { name, paths: ["frontend/"], eslint?: { cwd, extensions }, commands: [{ label, cwd, run, runWin? }],
+  //   format?: { cwd, run, runWin?, extensions? } } — format: run by the PostToolUse hook on each edited
+  //   file of the area (the file path, relative to cwd, is appended), e.g. "npx --no-install prettier --write".
   areas: [],
+  // Stop hook: an agent on a task branch may not end its turn before `check` passed on the current content.
+  stopGate: false,
   // maxParallel: how many touched areas the gate runs at once (0 = all). 1 trades time for peak RAM.
   gate: { maxParallel: 0 },
   // Files whose "version" must never be hand-edited (the tag made by promote is the real version).

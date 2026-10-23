@@ -13,12 +13,13 @@
 // The local clone is the source of truth: no PR, no CI. Integration/release branches only move by
 // fast-forward and are pushed to the remote as a backup; task branches are never pushed.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdtempSync, symlinkSync, lstatSync, unlinkSync, statSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdtempSync, symlinkSync, lstatSync, unlinkSync, statSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { repoRoot, mainCheckout, loadConfig, commandHint } from './config.mjs';
+import { gateKey, gatePassed, markPassed } from './gate-cache.mjs';
 import { queueFile, load as loadQueue, itemsOf, readyItems, describe as describeTask } from './queue-lib.mjs';
 
 const REPO_ROOT = repoRoot();
@@ -494,24 +495,6 @@ function shipIsolated(opts, header) {
 
 // ---------- gate: what land requires; `check` runs it alone ----------
 
-/** The working tree as a git tree id: tracked + untracked files, minus ignored ones — exactly what hard
- * rules and the areas look at. Staged into a copy of the index so unchanged files keep their stat cache
- * (nothing is re-hashed); the real index is untouched. null when git cannot do it. */
-function worktreeTree() {
-  const tmp = mkdtempSync(join(tmpdir(), 'devflow-index-'));
-  try {
-    const index = join(tmp, 'index');
-    const real = resolve(REPO_ROOT, git(['rev-parse', '--git-path', 'index']));
-    if (existsSync(real)) copyFileSync(real, index);
-    const env = { ...process.env, GIT_INDEX_FILE: index };
-    if (spawnSync('git', ['add', '-A'], { cwd: REPO_ROOT, env }).status !== 0) return null;
-    const r = spawnSync('git', ['write-tree'], { cwd: REPO_ROOT, env, encoding: 'utf8' });
-    return r.status === 0 ? r.stdout.trim() : null;
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
-}
-
 /** commitlint on DEV..HEAD, hard rules (ERROR blocks), then per-area checks of every file changed vs
  * DEV — committed or not (land runs on a clean tree anyway). */
 async function gate() {
@@ -529,10 +512,9 @@ async function gate() {
   // Hard rules and areas depend only on the content vs DEV, committed or not: same working tree, same DEV,
   // same merge base → same result. So `check` on uncommitted work, then the verifier's `check`, then
   // `land` after committing that content run them once. commitlint (above) reads the commits: always runs.
-  const tree = worktreeTree();
-  const key = tree && `${tree} ${git(['rev-parse', DEV])} ${git(['merge-base', DEV, 'HEAD'], { allowFail: true }) ?? ''}`;
-  const cacheFile = join(git(['rev-parse', '--absolute-git-dir']), 'gate-passed');
-  if (key && !opts.flags.has('no-cache') && existsSync(cacheFile) && readFileSync(cacheFile, 'utf8') === key) {
+  // The plugin's Stop hook reads the same key (gate-cache.mjs).
+  const key = gateKey(REPO_ROOT, DEV);
+  if (!opts.flags.has('no-cache') && gatePassed(REPO_ROOT, key)) {
     return console.log(`\n▶ gate: hard rules + areas already passed for this content vs ${DEV} — skipped. --no-cache to rerun.`);
   }
   step('gate: hard rules (ERROR blocks, WARN is for the verifier)');
@@ -540,7 +522,7 @@ async function gate() {
     [join(HERE, 'hard-rules.mjs'), '--base', DEV, '--strict'], REPO_ROOT);
   const committed = git(['-c', 'core.quotepath=off', 'diff', '--name-only', `${DEV}...HEAD`]).split('\n').filter(Boolean);
   await verify([...new Set([...committed, ...changedFiles()])]);
-  if (key && !dryRun) writeFileSync(cacheFile, key);
+  if (!dryRun) markPassed(REPO_ROOT, key);
 }
 
 async function check() {

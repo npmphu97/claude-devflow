@@ -56,7 +56,7 @@ quyết định, rồi:
 | `scripts/devflow/*.mjs` | Script vendor vào dự án (gate chạy cả khi không có Claude, khoá version theo dự án) |
 | `.devflow.json` | Cấu hình: nhánh, remote sao lưu, vùng gate (dò từ `package.json`, `pom.xml`, Gradle, Python, Go, Rust, .NET), luật cứng |
 | `package.json` | `npm run task / ship / check / land / promote / sync / backup / cloud-push / untask / archive / worktrees:clean / hard-rules / retro / handoff / queue / status / doctor / devflow-test` |
-| `CLAUDE.md` | Section quy trình (OpenSpec khi nào, bảng ví dụ, thiết kế test, luật cứng, bài học) giữa `<!-- devflow:start/end -->` |
+| `CLAUDE.md` | Section ngắn (~50 dòng) giữa `<!-- devflow:start/end -->`: lệnh build / test, vùng buộc `manual`, luật cần phán đoán, quy ước, bài học. Quy trình chi tiết (tiêu chí OpenSpec, bảng ví dụ, ma trận test) nằm trong skill `dev-loop`, chỉ nạp khi dùng. Bản cũ dài hơn → `--update` nhắc thay |
 | `docs/AGENT_WORKFLOW.md` | Các pha, circuit breaker, thang tin cậy |
 | `.claude/task-queue.md` | Hàng đợi việc chung (skill `/devflow:queue`): In progress / Ready / Waiting / Done. Ở main checkout, gitignore — mọi worktree dùng chung một bản |
 | `.claude/settings.json` | `plansDirectory` = `.claude/plans-draft` (bản nháp plan nằm trong repo, gitignored, không ở `~/.claude/plans/`; `.claude/plans/` chỉ chứa plan đã duyệt theo nhánh) + `permissions.allow` cho các lệnh local an toàn (`npm run check / ship / task / queue / status ...`; không gồm `land` / `promote`). Có file rồi → chỉ in gợi ý |
@@ -71,7 +71,8 @@ Không ghi đè file đã có. OpenSpec là tuỳ chọn (`openspec init --tools
 | Loại | Tên | Vai trò |
 |---|---|---|
 | Skill | `/devflow:init` | Gắn / cập nhật devflow trong repo |
-| Skill | `/devflow:dev-loop` | Một task qua đủ pha: intake → phân loại → analyze → plan (người duyệt) → implement → verify → self-review (tối đa 3 vòng, từ vòng 2 chỉ review diff mới, gom finding theo loại) → land |
+| Skill | `/devflow:dev-loop` | Một task: intake → **chọn cỡ S / M / L** (S: diff tả trong một câu, không plan, `check` rồi land; M: plan ngắn; L: OpenSpec) → analyze → plan (người duyệt) → implement → verify (gate + `verify-app`) → self-review (tối đa 3 vòng, từ vòng 2 chỉ review diff mới, gom finding theo loại) → land → **bài học** đặt ở tầng cao nhất (rule › lint/test › skill › CLAUDE.md) |
+| Skill | `/devflow:verify-setup` | Tạo / cập nhật skill riêng của dự án `.claude/skills/verify-app/` (khởi động app, tài khoản, bản đồ tính năng + cách kiểm từng tính năng), chạy thử để chứng minh. `verify-app` chạy trong subagent, trả bằng chứng theo tính năng |
 | Skill | `/devflow:opsx-run` | Chạy trọn một change OpenSpec đã duyệt artifact: worktree → apply (subagent) → check → verifier → review → commit → land theo chế độ `auto-land` / `manual` → untask + `npm run archive` → một báo cáo cuối. Phiên chính ở lại repo chính (lệnh trong worktree chạy bằng `npm --prefix`), nên sau khi duyệt artifact có thể `/clear` rồi chạy |
 | Skill | `/devflow:hot-fix-dev` | Fix nhỏ làm thẳng trên checkout `dev` (không worktree) qua `ship --verify --land`; gate vẫn chạy, file lạ của session khác không bị đụng |
 | Skill | `devflow:ship` | Luồng git local qua `scripts/devflow/flow.mjs` |
@@ -82,6 +83,8 @@ Không ghi đè file đã có. OpenSpec là tuỳ chọn (`openspec init --tools
 | Agent | `devflow:verifier` | Kiểm diff so với plan trong context mới, kết luận PASS/FAIL |
 | Hook | SessionStart | In ghi chú handoff của nhánh + tóm tắt queue (task của nhánh, số task ready, task kế); chạy `remoteSetup` trong cloud session và fetch `dev` về local (để `check` có nhánh mà so) |
 | Hook | PreToolUse (Bash, PowerShell) | Chặn skip test, `git push` tay, `gh pr/release/run`, dời / merge / reset `--hard` lên `dev`/`main`, SQL phá dữ liệu, `rm -rf /` |
+| Hook | PostToolUse (Edit, Write) | Chạy formatter của vùng sở hữu file vừa sửa (`areas[].format`); lỗi formatter bị bỏ qua, gate vẫn lint |
+| Hook | Stop | Khi `stopGate: true`: trên nhánh task, agent không kết thúc lượt khi nội dung hiện tại chưa qua `check` (đọc cùng cache với gate; chặn một lần mỗi lần dừng, nên dừng có chủ đích vẫn được) |
 
 Hook chỉ hoạt động trong repo có `.devflow.json` — cài plugin không đổi hành vi ở dự án khác.
 
@@ -136,8 +139,10 @@ main checkout. Đừng đứng terminal/IDE bên trong thư mục đang xoá (Wi
   "areas": [{
     "name": "web", "paths": ["web/"],
     "eslint": { "cwd": "web", "extensions": [".ts", ".html"] },
-    "commands": [{ "label": "build", "cwd": "web", "run": "npm run build", "runWin": "..." }]
+    "commands": [{ "label": "build", "cwd": "web", "run": "npm run build", "runWin": "..." }],
+    "format": { "cwd": "web", "run": "npx --no-install prettier --write --ignore-unknown" }  // hook PostToolUse, nối đường dẫn file vào cuối
   }],
+  "stopGate": true,                    // hook Stop: nhánh task phải qua `check` trước khi agent kết thúc lượt
   "versionFiles": ["package.json", { "file": "api/pom.xml", "type": "maven" }, { "file": "x.toml", "regex": "^version\\s*=" }],
   "testPaths": ["(^|/)tests?/", "\\.(spec|test)\\.[jt]sx?$"],   // nhận diện file test
   "rules": [{
