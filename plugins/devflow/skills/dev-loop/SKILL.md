@@ -91,7 +91,8 @@ Chạy và đọc kết quả thật, không đoán:
 - Trong lúc sửa: chỉ test liên quan (lệnh trong CLAUDE.md).
 - Khi xong: `npm run check` — đúng gate của land (commitlint, hard-rules, lint / build / test theo vùng
   file trong `.devflow.json`), chạy cả trên thay đổi chưa commit. `hard-rules` in ERROR (chặn) và WARN
-  (mở dòng đó, sửa nếu đúng là vi phạm).
+  (mở dòng đó, sửa nếu đúng là vi phạm). Gọi Bash với `timeout: 600000`. Gate cache theo nội dung: verifier
+  và `land` sau đó không chạy lại nếu nội dung không đổi.
 - Test không nằm trong gate (integration cần DB, E2E...) mà thay đổi chạm tới → chạy tay theo CLAUDE.md.
 - **Chạy app thật** (mục "Chạy app / smoke" trong CLAUDE.md) khi thay đổi người dùng thấy được: chạy luồng
   vừa sửa, dán bằng chứng (output, response, ảnh chụp). Gate xanh chưa chứng minh tính năng chạy.

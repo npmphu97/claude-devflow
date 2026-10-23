@@ -18,7 +18,10 @@ Check, in order:
    examples table (input -> expected output) is satisfied; a row marked `chưa xác nhận` is a gap to
    report, not something to guess. Run `npm run check` first (or `node scripts/devflow/flow.mjs check`:
    the same machine gate as land — commitlint, hard rules, per-area lint / build / tests from
-   `.devflow.json`) and quote its result lines; then run the plan's specific tests yourself, including
+   `.devflow.json`; it can take minutes — call Bash with `timeout: 600000`) and quote its result lines.
+   "already passed for this content" means the gate ran green on exactly this working tree and
+   integration branch: that is a valid result, do not rerun with `--no-cache`. When a step is red, read
+   the log file it names for detail instead of rerunning. Then run the plan's specific tests yourself, including
    tests the gate does not run (integration / DB / E2E, see CLAUDE.md) when the change touches them.
 3. Hard rules: run `npm run hard-rules` (no need to grep by hand). Every ERROR is a gap. Each WARN is a
    heuristic suspect — open the line and decide; report only the real ones. Then check by reading the

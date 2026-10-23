@@ -10,6 +10,8 @@ vào `dev` (`npm run land`, có gate) → fast-forward `dev` vào `main` + tag `
   `EnterWorktree(path=...)`); mọi bước git qua skill `devflow:ship` (`npm run ship|check|land|promote|sync|backup|untask|archive`).
 - Phiên cloud (container tạm, nhánh `ccr-*`): kết thúc bằng `npm run cloud-push` thay vì `git push` (chỉ backup,
   không land). Trên máy: `git fetch <remote> ccr-xxx` → `npm run task` (từ `ccr-xxx`) → `npm run land`.
+- `npm run check` / `land` / `ship --verify` chạy build + test: gọi Bash với `timeout: 600000` (mặc định 2 phút sẽ
+  cắt giữa chừng). Output đầy đủ nằm ở file log gate in ra; đọc file đó thay vì chạy lại.
 - Việc máy làm được thì dùng script: `npm run check` (gate của land, không merge), `npm run hard-rules`
   (dò luật cứng trên diff), `npm run retro` (số liệu retro), `npm run handoff` (khung ghi chú),
   `npm run queue -- ready` (task làm được ngay, không còn blocker), `npm run status` (worktree nào đang
