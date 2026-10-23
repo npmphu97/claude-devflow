@@ -2,12 +2,14 @@
 // Stop hook (only in repos with a .devflow.json that sets "stopGate": true): the agent may not end its
 // turn on a task branch whose current content has not passed the land gate. "Passed" is the same
 // content-keyed cache `check` / `land` write (gate-cache.mjs), so after one green `check` this costs one
-// `git write-tree`. Blocks once per stop (stop_hook_active): an agent stopping on purpose — a question for
-// the user, a handoff — says so and ends the turn again. The integration / release branches are left
+// `git write-tree`. Only the content counts here, not `dev`: another session landing must not make every
+// waiting session rerun its gate — `land` itself reruns the gate against the new `dev`. Blocks once per
+// stop (stop_hook_active): an agent stopping on purpose — a question for the user, a handoff — says so and
+// ends the turn again. The integration / release branches are left
 // alone: hot-fix-dev gates through `ship --verify`, and the main checkout may hold other sessions' edits.
 import { spawnSync } from 'node:child_process';
 import { repoRoot, loadConfig, commandHint } from '../kit/scripts/devflow/config.mjs';
-import { gateKey, gatePassed } from '../kit/scripts/devflow/gate-cache.mjs';
+import { worktreeTree, passedTree } from '../kit/scripts/devflow/gate-cache.mjs';
 
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
@@ -34,7 +36,8 @@ if (!git(['rev-parse', '--verify', '-q', dev])) process.exit(0);
 const ahead = Number(git(['rev-list', '--count', `${dev}..HEAD`]) ?? 0);
 if (!ahead && !git(['status', '--porcelain'])) process.exit(0);
 
-if (gatePassed(root, gateKey(root, dev))) process.exit(0);
+const tree = worktreeTree(root);
+if (!tree || passedTree(root) === tree) process.exit(0);
 
 console.log(JSON.stringify({
   decision: 'block',

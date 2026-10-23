@@ -17,7 +17,7 @@ Glob `**/devflow/skills/init/install.mjs` dưới `~/.claude/plugins/`.
 - **Section CLAUDE.md dài hơn mẫu** (trước 0.10 là ~130 dòng): đề xuất thay bằng mẫu mới
   `${CLAUDE_PLUGIN_ROOT}/kit/templates/CLAUDE.devflow.md`, **giữ nguyên phần dự án đã điền** (lệnh build / test,
   luật riêng, vùng buộc `manual`, ví dụ quy tắc nghiệp vụ, bài học). Phần chung đã chuyển vào skill `dev-loop`
-  (`reference.md`). Trình diff cho người dùng duyệt trước khi ghi.
+  (`${CLAUDE_PLUGIN_ROOT}/skills/dev-loop/reference.md`). Trình diff cho người dùng duyệt trước khi ghi.
 - `stopGate` / `areas[].format` chưa có trong `.devflow.json` → hỏi người dùng có bật không (mục 4 bên dưới).
 - Chưa có `.claude/skills/verify-app/` và dự án có app chạy được → đề xuất `/devflow:verify-setup`.
 Commit `chore(devflow): update scripts` qua `npm run ship`.

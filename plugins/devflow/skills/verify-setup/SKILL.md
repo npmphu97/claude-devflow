@@ -20,7 +20,9 @@ Mẫu: `${CLAUDE_PLUGIN_ROOT}/kit/templates/verify-app-SKILL.md` (biến chưa �
 3. **Viết skill** từ mẫu vào `.claude/skills/verify-app/SKILL.md`. Bản đồ tính năng: mỗi dòng một tính năng người
    dùng thấy được, cách kiểm **chạy được nguyên văn** (lệnh curl / CLI, hoặc các bước Playwright), bằng chứng mong
    đợi cụ thể (mã HTTP, trường trong JSON, dòng chữ trên màn hình). Ưu tiên lệnh hơn thao tác tay. Bắt đầu với
-   5–15 tính năng chính; không cần đủ.
+   5–15 tính năng chính; không cần đủ. Giữ `context: fork` + `background: false` của mẫu: skill chạy trong
+   subagent và `dev-loop` chờ kết quả (cần Claude Code ≥ v2.1.218; bản cũ hơn → bỏ hai dòng đó, skill chạy
+   trong phiên chính).
 4. **Chứng minh:** chạy thử skill vừa viết trên nhánh hiện tại (khởi động → 2–3 dòng của bản đồ → dừng). Lệnh nào
    sai thì sửa skill tới khi chạy được; không ghi lệnh chưa từng chạy thành công. Cái gì không tự động được (cần
    người bật VPN, OTP...) → ghi rõ trong skill là `BLOCKED` cần người, kèm lý do.

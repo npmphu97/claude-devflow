@@ -2,6 +2,7 @@
 name: verify-app
 description: Prove that a change works in the running app of this project — start it, exercise the features the diff touches, collect evidence (responses, output, screenshots), stop it. Use after the land gate is green for any change a user can see (dev-loop phase 4), or when asked to "verify the app" / "chạy thử app".
 context: fork
+background: false
 ---
 
 # verify-app — <tên dự án>
