@@ -33,13 +33,14 @@ sau khi land (nếu không, fast-forward `dev` sẽ đè lỗi lên file untrack
 
 ## 2. Apply — subagent
 `Agent` (general-purpose, context sạch). Prompt chỉ gồm: đường dẫn worktree (tuyệt đối; "chỉ sửa file trong
-đó, chạy lệnh bằng `cd` vào đó"), tên change, "chạy `/opsx:apply <name>` rồi `npm run check`; dừng và báo khi gặp điều kiện Pause của apply;
+đó, chạy lệnh bằng `cd` vào đó"), tên change, "chạy `/opsx:apply <name>` rồi `npm run check` (Bash `timeout: 600000`); dừng và báo khi gặp điều kiện Pause của apply;
 trả về: số task xong/tổng, kết quả `check`, câu hỏi cần người quyết". Không chép lại nội dung artifact.
 - Subagent báo Pause/câu hỏi → chuyển nguyên văn cho người dùng, rồi `SendMessage` trả lời để nó làm tiếp.
 - Nó lộ ra lỗi thiết kế → dừng, đề xuất `/opsx:update`, không tự đổi artifact.
 
 ## 3. Verify và review (liền mạch, phiên chính)
-1. `npm --prefix "<wt>" run check`. Đỏ → sửa root cause theo `devflow:steward`; **tối đa 2 vòng** cho cùng một
+1. `npm --prefix "<wt>" run check` (Bash `timeout: 600000`; như mọi lần gọi `check` / `land` trong skill này).
+   Subagent apply vừa xanh trên cùng nội dung → gate in "already passed", không chạy lại. Đỏ → sửa root cause theo `devflow:steward`; **tối đa 2 vòng** cho cùng một
    lỗi (circuit breaker của `dev-loop` pha 4), quá thì dừng và báo.
 2. Test không nằm trong gate mà thay đổi chạm tới (integration cần DB, E2E...) → chạy thêm theo CLAUDE.md.
 3. Subagent `devflow:verifier` kiểm diff so với `openspec/changes/<name>/` (prompt chỉ đưa đường dẫn). FAIL →

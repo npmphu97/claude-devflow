@@ -63,9 +63,16 @@ tự thêm cờ này.
   verifier đọc (xoá test / assertion, secret viết cứng, luật WARN của dự án).
 - Mỗi vùng trong `areas` của `.devflow.json` có file đổi (các vùng chạy **song song**): ESLint các file
   trong một lần chạy (có lỗi hoặc số cảnh báo tăng so với `dev` → dừng; bản `dev` chỉ được đọc cho file
-  đang có cảnh báo), rồi các lệnh của vùng (build, unit test...).
-- Gate đã xanh cho đúng HEAD này + `dev` này trên cây sạch → bỏ qua (cache trong `.git/gate-passed`);
-  `--no-cache` để chạy lại.
+  đang có cảnh báo), rồi các lệnh của vùng (build, unit test...). Output đầy đủ của mỗi lệnh ghi vào
+  `<git-dir>/devflow-logs/<vùng>-<lệnh>.log` (không lên `git status`); terminal chỉ in 1 dòng khi xanh, 60
+  dòng cuối + đường dẫn log khi đỏ. Cần thêm chi tiết → đọc file log, đừng chạy lại gate.
+- Cache theo **nội dung**: hard-rules + vùng đã xanh cho đúng cây làm việc này (kể cả file chưa commit /
+  untracked) + `dev` này → bỏ qua (`<git-dir>/gate-passed`). Nên `check` trên thay đổi chưa commit, rồi
+  `check` của verifier, rồi `land` sau khi commit đúng nội dung đó chỉ chạy gate **một lần**. commitlint
+  luôn chạy (nó kiểm commit, không kiểm nội dung). `--no-cache` để chạy lại.
+- **Lệnh lâu:** `check`, `land`, `ship --verify` chạy build + test của vùng, có thể vượt timeout mặc định
+  2 phút của công cụ Bash. Gọi với `timeout: 600000`, hoặc `run_in_background` nếu gate dài hơn 10 phút —
+  bị cắt giữa chừng thì phải chạy lại từ đầu.
 - Đỏ → không merge gì, nhánh giữ nguyên (đã rebase thì vẫn ở trạng thái đã rebase).
 
 `ship --verify` chạy phần lint / lệnh vùng trên các file sắp commit, trước khi commit.

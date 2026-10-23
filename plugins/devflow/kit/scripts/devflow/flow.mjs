@@ -13,7 +13,7 @@
 // The local clone is the source of truth: no PR, no CI. Integration/release branches only move by
 // fast-forward and are pushed to the remote as a backup; task branches are never pushed.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdtempSync, symlinkSync, lstatSync, unlinkSync, statSync, mkdirSync, copyFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdtempSync, symlinkSync, lstatSync, unlinkSync, statSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -203,16 +203,18 @@ function runLocal(label, cmd, args, cwd, opts = {}) {
   if (r.error || r.status !== 0) die(`gate failed at: ${label}. Nothing was committed/merged.`);
 }
 
-/** Async run with output collected (not inherited), so gate areas can run side by side. */
+/** Async run with output collected (not inherited), so gate areas can run side by side. `output` is
+ * stdout and stderr interleaved in arrival order (for logs). */
 function runCapture(cmd, args, { cwd, input, ...opts } = {}) {
   return new Promise(done => {
     const p = spawn(cmd, args, { cwd, ...opts });
     let stdout = '';
     let stderr = '';
-    p.stdout.on('data', d => (stdout += d));
-    p.stderr.on('data', d => (stderr += d));
-    p.on('error', e => done({ status: -1, stdout, stderr: stderr + e.message }));
-    p.on('close', status => done({ status, stdout, stderr }));
+    let output = '';
+    p.stdout.on('data', d => ((stdout += d), (output += d)));
+    p.stderr.on('data', d => ((stderr += d), (output += d)));
+    p.on('error', e => done({ status: -1, stdout, stderr: stderr + e.message, output: output + e.message }));
+    p.on('close', status => done({ status, stdout, stderr, output }));
     p.stdin.on('error', () => {});
     p.stdin.end(input);
   });
@@ -282,14 +284,36 @@ async function verifyArea(area, areaFiles) {
       if (now.warnings > base) return fail(`verify: ESLint warnings increased in ${f}. Nothing was committed/merged.`);
     }
   }
-  for (const c of area.commands ?? []) {
+  for (const [i, c] of (area.commands ?? []).entries()) {
     const run = (isWin && c.runWin) || c.run;
-    out += `  $ ${c.label ?? run}\n`;
+    const label = c.label ?? run;
+    out += `  $ ${label}\n`;
+    const t0 = Date.now();
     const r = await runCapture(run, [], { cwd: join(REPO_ROOT, c.cwd ?? '.'), shell: true });
-    out += r.stdout + r.stderr;
-    if (r.status !== 0) return fail(`gate failed at: ${c.label ?? run}. Nothing was committed/merged.`);
+    const secs = ((Date.now() - t0) / 1000).toFixed(1);
+    const log = writeLog(`${slugify(area.name) || 'area'}-${slugify(label) || `cmd${i + 1}`}`, `$ ${run}\n${r.output}`);
+    if (r.status !== 0) {
+      const lines = r.output.replace(/\s+$/, '').split(/\r?\n/);
+      const tail = lines.slice(-LOG_TAIL);
+      return fail(`    ✖ exit ${r.status} after ${secs}s — ${lines.length > LOG_TAIL ? `last ${LOG_TAIL} of ${lines.length} lines` : 'output'}` +
+        ` (full log: ${log}):\n${tail.join('\n')}\ngate failed at: ${label}. Nothing was committed/merged.`);
+    }
+    out += `    ✔ ${secs}s (log: ${log})\n`;
   }
   return { ok: true, out };
+}
+
+/** Lines of a failing command's output printed by the gate; the full output is in its log file. */
+const LOG_TAIL = 60;
+
+/** Full output of a gate command, kept out of the terminal (and so out of an agent's context): green →
+ * one line, red → the tail. Under this checkout's git dir, so nothing shows up in `git status`. */
+function writeLog(name, text) {
+  const dir = join(git(['rev-parse', '--absolute-git-dir']), 'devflow-logs');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${name}.log`);
+  writeFileSync(file, text);
+  return file;
 }
 
 /** Every area of .devflow.json touched by `files`, in parallel (areas are independent). */
@@ -423,15 +447,27 @@ function shipIsolated(opts, header) {
 
 // ---------- gate: what land requires; `check` runs it alone ----------
 
+/** The working tree as a git tree id: tracked + untracked files, minus ignored ones — exactly what hard
+ * rules and the areas look at. Staged into a copy of the index so unchanged files keep their stat cache
+ * (nothing is re-hashed); the real index is untouched. null when git cannot do it. */
+function worktreeTree() {
+  const tmp = mkdtempSync(join(tmpdir(), 'devflow-index-'));
+  try {
+    const index = join(tmp, 'index');
+    const real = resolve(REPO_ROOT, git(['rev-parse', '--git-path', 'index']));
+    if (existsSync(real)) copyFileSync(real, index);
+    const env = { ...process.env, GIT_INDEX_FILE: index };
+    if (spawnSync('git', ['add', '-A'], { cwd: REPO_ROOT, env }).status !== 0) return null;
+    const r = spawnSync('git', ['write-tree'], { cwd: REPO_ROOT, env, encoding: 'utf8' });
+    return r.status === 0 ? r.stdout.trim() : null;
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 /** commitlint on DEV..HEAD, hard rules (ERROR blocks), then per-area checks of every file changed vs
  * DEV — committed or not (land runs on a clean tree anyway). */
 async function gate() {
-  // A gate that passed for this exact HEAD on a clean tree, with DEV unchanged, would give the same result.
-  const key = git(['status', '--porcelain']) ? null : `${git(['rev-parse', 'HEAD'])} ${git(['rev-parse', DEV])}`;
-  const cacheFile = join(git(['rev-parse', '--absolute-git-dir']), 'gate-passed');
-  if (key && !opts.flags.has('no-cache') && existsSync(cacheFile) && readFileSync(cacheFile, 'utf8') === key) {
-    return console.log(`\n▶ gate: already passed for this HEAD on this ${DEV} (clean tree) — skipped. --no-cache to rerun.`);
-  }
   if (git(['rev-list', '--count', `${DEV}..HEAD`]) !== '0' && cfg.commitlint !== false) {
     const cli = join(REPO_ROOT, 'node_modules', '@commitlint', 'cli', 'cli.js');
     if (existsSync(cli)) {
@@ -442,6 +478,15 @@ async function gate() {
     } else {
       console.log('\n▶ gate: commitlint not installed — skipped (set "commitlint": true to require it)');
     }
+  }
+  // Hard rules and areas depend only on the content vs DEV, committed or not: same working tree, same DEV,
+  // same merge base → same result. So `check` on uncommitted work, then the verifier's `check`, then
+  // `land` after committing that content run them once. commitlint (above) reads the commits: always runs.
+  const tree = worktreeTree();
+  const key = tree && `${tree} ${git(['rev-parse', DEV])} ${git(['merge-base', DEV, 'HEAD'], { allowFail: true }) ?? ''}`;
+  const cacheFile = join(git(['rev-parse', '--absolute-git-dir']), 'gate-passed');
+  if (key && !opts.flags.has('no-cache') && existsSync(cacheFile) && readFileSync(cacheFile, 'utf8') === key) {
+    return console.log(`\n▶ gate: hard rules + areas already passed for this content vs ${DEV} — skipped. --no-cache to rerun.`);
   }
   step('gate: hard rules (ERROR blocks, WARN is for the verifier)');
   runLocal(`hard-rules --base ${DEV} --strict`, process.execPath,
