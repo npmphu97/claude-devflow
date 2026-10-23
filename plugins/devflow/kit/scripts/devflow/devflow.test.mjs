@@ -676,6 +676,12 @@ describe('hooks: stop gate, format on edit', { skip: !HOOKS && 'plugin hooks not
     assert.equal(blocks(hook(repo, 'stop-gate.mjs', { cwd: wt, stop_hook_active: true })), false);
     assert.equal(repo.run(FLOW, ['check'], { cwd: wt }).status, 0);
     assert.equal(blocks(hook(repo, 'stop-gate.mjs', { cwd: wt })), false); // same content passed
+    repo.git(['checkout', '-q', 'dev']); // another session lands: dev moves, this content did not
+    writeFileSync(join(repo.root, 'other.txt'), 'o\n');
+    repo.git(['add', 'other.txt']);
+    repo.git(['commit', '-qm', 'feat(o): other session']);
+    repo.git(['checkout', '-q', 'main']);
+    assert.equal(blocks(hook(repo, 'stop-gate.mjs', { cwd: wt })), false);
     writeFileSync(join(wt, 'a.txt'), 'a\nc\n');
     assert.equal(blocks(hook(repo, 'stop-gate.mjs', { cwd: wt })), true); // content moved on
   });
@@ -701,5 +707,15 @@ describe('hooks: stop gate, format on edit', { skip: !HOOKS && 'plugin hooks not
     assert.equal(readFileSync(join(repo.root, 'web/src/a.js'), 'utf8'), 'a\nfmt\n');
     assert.equal(readFileSync(join(repo.root, 'web/b.txt'), 'utf8'), 'b\n'); // extension not listed
     assert.equal(readFileSync(join(repo.root, 'c.js'), 'utf8'), 'c\n'); // no area owns it
+  });
+
+  it('format hook passes a hostile file name as one argument, not as shell syntax', { skip: process.platform === 'win32' && 'POSIX quoting' }, () => {
+    const fmt = { run: `node -e "require('fs').appendFileSync(process.argv[1], 'fmt\\n')"` };
+    const repo = mkRepo({ '.devflow.json': JSON.stringify({ ...DEV_FLOW_JSON, areas: [{ name: 'all', paths: [''], commands: [], format: fmt }] }) });
+    const name = `it's $(touch pwned) "x".js`;
+    writeFileSync(join(repo.root, name), 'a\n');
+    assert.equal(hook(repo, 'format-on-edit.mjs', { tool_name: 'Write', tool_input: { file_path: join(repo.root, name) } }).status, 0);
+    assert.equal(readFileSync(join(repo.root, name), 'utf8'), 'a\nfmt\n');
+    assert.equal(existsSync(join(repo.root, 'pwned')), false);
   });
 });

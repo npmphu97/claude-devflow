@@ -38,6 +38,9 @@ export function gateKey(root, dev) {
 /** Per-worktree file holding the key of the last green gate. */
 export const cacheFile = root => join(git(root, ['rev-parse', '--absolute-git-dir']), 'gate-passed');
 
+/** Working-tree part of the last green key: the content that passed, whatever `dev` was then. */
+export const passedTree = root => existsSync(cacheFile(root)) ? readFileSync(cacheFile(root), 'utf8').split(' ')[0] : null;
+
 export const gatePassed = (root, key) => !!key && existsSync(cacheFile(root)) && readFileSync(cacheFile(root), 'utf8') === key;
 
 export const markPassed = (root, key) => key && writeFileSync(cacheFile(root), key);
