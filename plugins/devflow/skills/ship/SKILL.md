@@ -61,9 +61,11 @@ tự thêm cờ này.
 - `scripts/devflow/hard-rules.mjs --strict`: luật cứng trên dòng thêm / xoá so với `dev`. ERROR chặn
   (disable / focus test, sửa version tay, luật ERROR của `.devflow.json`); WARN chỉ in ra để agent /
   verifier đọc (xoá test / assertion, secret viết cứng, luật WARN của dự án).
-- Mỗi vùng trong `areas` của `.devflow.json` có file đổi (các vùng chạy **song song**): ESLint các file
-  trong một lần chạy (có lỗi hoặc số cảnh báo tăng so với `dev` → dừng; bản `dev` chỉ được đọc cho file
-  đang có cảnh báo), rồi các lệnh của vùng (build, unit test...). Output đầy đủ của mỗi lệnh ghi vào
+- Mỗi vùng trong `areas` của `.devflow.json` có file đổi (các vùng chạy **song song**, tối đa
+  `gate.maxParallel` vùng một lúc; mặc định `0` = tất cả, đặt `1` khi build JVM + frontend cùng lúc làm
+  máy hết RAM): ESLint các file trong một lần chạy (có lỗi hoặc số cảnh báo tăng so với `dev` → dừng; bản
+  `dev` chỉ được đọc cho file đang có cảnh báo, mọi file trong **một** tiến trình qua Node API của ESLint;
+  không nạp được API thì CLI từng file, tối đa 3 cùng lúc), rồi các lệnh của vùng (build, unit test...). Output đầy đủ của mỗi lệnh ghi vào
   `<git-dir>/devflow-logs/<vùng>-<lệnh>.log` (không lên `git status`); terminal chỉ in 1 dòng khi xanh, 60
   dòng cuối + đường dẫn log khi đỏ. Cần thêm chi tiết → đọc file log, đừng chạy lại gate.
 - Cache theo **nội dung**: hard-rules + vùng đã xanh cho đúng cây làm việc này (kể cả file chưa commit /
