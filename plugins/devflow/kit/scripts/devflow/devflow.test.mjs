@@ -172,6 +172,47 @@ describe('flow: gate cache, parallel areas, isolated ship, cloud-push', () => {
     assert.doesNotMatch(r.stdout, /already passed/);
   });
 
+  it('gate cache follows the content: uncommitted work checked once, committing it does not rerun', () => {
+    const repo = mkRepo({ '.devflow.json': JSON.stringify(DEV_FLOW_JSON), 'a.txt': 'a\n' });
+    const wt = taskBranch(repo, 'feat/dirty');
+    const check = () => repo.run(FLOW, ['check'], { cwd: wt });
+    writeFileSync(join(wt, 'a.txt'), 'a\nb\n');
+    writeFileSync(join(wt, 'new.txt'), 'n\n');
+    let r = check();
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.doesNotMatch(r.stdout, /already passed/);
+    assert.match(check().stdout, /already passed/);
+    writeFileSync(join(wt, 'new.txt'), 'n2\n'); // untracked file changed → rerun
+    assert.doesNotMatch(check().stdout, /already passed/);
+    assert.equal(repo.run(FLOW, ['ship', '-m', 'feat(t): dirty', 'a.txt', 'new.txt'], { cwd: wt }).status, 0);
+    assert.match(check().stdout, /already passed/);
+    assert.equal(spawnSync('git', ['status', '--porcelain'], { cwd: wt, encoding: 'utf8' }).stdout, ''); // real index untouched
+  });
+
+  it('gate output goes to a log file: one line when green, the tail when red', () => {
+    const lines = n => `node -e "for(let i=1;i<=${n};i++)console.log('line-'+i)"`;
+    const cfg = { ...DEV_FLOW_JSON, areas: [
+      { name: 'ok', paths: ['a/'], commands: [{ label: 'chatty', run: lines(100) }] },
+      { name: 'bad', paths: ['b/'], commands: [{ label: 'loud fail', run: `${lines(100)} && node -e "process.exit(3)"` }] },
+    ] };
+    const repo = mkRepo({ '.devflow.json': JSON.stringify(cfg), 'a/x.txt': 'x\n', 'b/y.txt': 'y\n' });
+    const wt = taskBranch(repo, 'feat/logs');
+    writeFileSync(join(wt, 'a/x.txt'), 'x2\n');
+    let r = repo.run(FLOW, ['check'], { cwd: wt });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.doesNotMatch(r.stdout, /line-50/);
+    const okLog = r.stdout.match(/log: (.+ok-chatty\.log)\)/)[1];
+    assert.match(readFileSync(okLog, 'utf8'), /line-1\n[\s\S]*line-100/);
+    writeFileSync(join(wt, 'b/y.txt'), 'y2\n');
+    r = repo.run(FLOW, ['check'], { cwd: wt });
+    assert.notEqual(r.status, 0);
+    const out = r.stdout + r.stderr;
+    assert.match(out, /exit 3 .*last 60 of 100 lines/);
+    assert.match(out, /line-100/);
+    assert.doesNotMatch(out, /line-40\n/);
+    assert.match(out, /bad-loud-fail\.log/);
+  });
+
   it('a failing area command stops the gate and prints its output', () => {
     const cfg = { ...DEV_FLOW_JSON, areas: [
       { name: 'ok', paths: ['a/'], commands: [{ label: 'ok', run: 'node -e "process.exit(0)"' }] },
