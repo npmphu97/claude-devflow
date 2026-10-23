@@ -8,14 +8,17 @@ import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync, existsSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkCommand } from '../../../hooks/guard-rules.mjs';
+import { checkCommand } from './guard-rules.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FLOW = join(HERE, 'flow.mjs');
 const HARD_RULES = join(HERE, 'hard-rules.mjs');
 const QUEUE = join(HERE, 'queue.mjs');
 const WCLEAN = join(HERE, 'worktrees-clean.mjs');
-const HOOKS = join(HERE, '..', '..', '..', 'hooks');
+// The hooks ship with the plugin, not with the vendored scripts: found next to the kit in the plugin, or via
+// CLAUDE_PLUGIN_ROOT; otherwise (a project without the plugin path) their tests are skipped.
+const HOOKS = [join(HERE, '..', '..', '..', 'hooks'), process.env.CLAUDE_PLUGIN_ROOT && join(process.env.CLAUDE_PLUGIN_ROOT, 'hooks')]
+  .find(d => d && existsSync(join(d, 'stop-gate.mjs')));
 const node = process.execPath;
 const ctx = (current, guard = {}) => ({
   dev: 'dev', main: 'main', current,
@@ -659,7 +662,7 @@ renameSync('openspec/changes/' + process.argv[3], 'openspec/changes/archive/' + 
   });
 });
 
-describe('hooks: stop gate, format on edit', () => {
+describe('hooks: stop gate, format on edit', { skip: !HOOKS && 'plugin hooks not found (set CLAUDE_PLUGIN_ROOT to the devflow plugin to run them)' }, () => {
   const hook = (repo, name, payload) => repo.run(join(HOOKS, name), [], { input: JSON.stringify(payload) });
   const blocks = r => (assert.equal(r.status, 0, r.stderr), /"decision":"block"/.test(r.stdout));
 
