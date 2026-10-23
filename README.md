@@ -2,7 +2,13 @@
 
 Đóng gói workflow, scripts, skills, agents và hooks của `tutoring-hub` thành một plugin dùng được cho
 mọi dự án dev local: mỗi task một worktree, gate local thay CI, `dev`/`main` chỉ fast-forward, tag
-phiên bản tự sinh, verifier độc lập, ghi chú handoff, số liệu retro, hook chặn lệnh nguy hiểm.
+phiên bản tự sinh, verifier độc lập, skill `verify-app` riêng của dự án để kiểm app thật, ghi chú handoff, số
+liệu retro, hook chặn lệnh nguy hiểm / format file vừa sửa / không cho kết thúc lượt khi chưa qua gate.
+
+Nguyên tắc (đối chiếu best practices của Anthropic, cách Boris Cherny dùng Claude Code, pstack của Lauren Tan):
+cho agent cách **tự kiểm chứng** (gate, `verify-app`, verifier context mới); **người viết ≠ người kiểm**; quy trình
+nằm trong skill, CLAUDE.md giữ ngắn; luật máy kiểm được thì giao cho máy (rule, hook) thay vì viết thành lời; độ
+nặng của quy trình theo cỡ task (S / M / L).
 
 ## Cài đặt (chỉ local, không đưa lên đâu cả)
 
@@ -45,6 +51,16 @@ copy tay.
 Cách nào cũng dùng giống nhau: vào thư mục dự án, chạy `/devflow:init` một lần (xem mục dưới), rồi làm
 việc bằng `/devflow:dev-loop`, `npm run land`... Plugin có bản mới → trong từng dự án chạy lại
 `/devflow:init` (chế độ cập nhật) để làm mới `scripts/devflow/`.
+
+### Nâng cấp lên 0.10
+
+Trong từng dự án: `/devflow:init` (chế độ cập nhật). Script in các dòng `!` cần xử lý:
+
+1. Section devflow trong `CLAUDE.md` còn bản cũ (~130 dòng) → thay bằng mẫu mới (~50 dòng), giữ phần dự án đã
+   điền (lệnh build / test, luật riêng, vùng buộc `manual`, bài học). Phần chung đã chuyển vào skill `dev-loop`.
+2. Thêm `"stopGate": true` vào `.devflow.json` (repo cũ mặc định tắt).
+3. Thêm `format` cho các vùng có formatter (prettier, gofmt, ruff, black...).
+4. Dự án có app chạy được → `/devflow:verify-setup` để tạo `.claude/skills/verify-app/`.
 
 ## Gắn vào một dự án
 
@@ -101,6 +117,8 @@ ESLint từng file (lỗi hoặc tăng cảnh báo so với `dev` → chặn) r�
 tối đa `gate.maxParallel` (mặc định `0` = tất cả; `1` cho máy ít RAM). Output đầy đủ
 ghi vào file log trong git dir; terminal chỉ in 1 dòng khi xanh, 60 dòng cuối khi đỏ. Cache theo nội dung
 cây làm việc (kể cả chưa commit) + `dev`: `check` → verifier → `land` trên cùng nội dung chỉ chạy gate một lần.
+Hook Stop (`stopGate`) đọc cùng cache: trên nhánh task, agent chưa được kết thúc lượt khi nội dung hiện tại chưa
+qua `check`. Format không nằm trong gate: hook PostToolUse format từng file ngay khi agent sửa (`areas[].format`).
 
 ## Chạy song song nhiều task
 

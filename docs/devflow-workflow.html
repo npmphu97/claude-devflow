@@ -402,7 +402,7 @@
         <div>
           <span class="eyebrow">Git-native · Local-first</span>
           <h1>Từ yêu cầu đến code đã land.</h1>
-          <p>Một workflow có đường đi rõ ràng cho cả task nhỏ lẫn change lớn: xếp hàng, claim bằng worktree, kiểm tra bằng gate và giữ đầy đủ dấu vết trong Git.</p>
+          <p>Một workflow có đường đi rõ ràng cho mọi cỡ task: xếp hàng, claim bằng worktree, chứng minh bằng gate và app thật, giữ đầy đủ dấu vết trong Git.</p>
         </div>
         <div class="hero-meta">
           <span>queue → branch</span>
@@ -417,8 +417,8 @@
             <li>Đưa việc vào queue</li>
             <li>Chọn task không còn blocker</li>
             <li>Claim bằng branch + worktree</li>
-            <li>Code, ship, check, land</li>
-            <li>Đóng queue; archive nếu có spec</li>
+            <li>Chọn cỡ S / M / L, code, check</li>
+            <li>verify-app, land, đóng queue; rút bài học</li>
           </ol>
         </div>
         <div class="quick-note">Nguồn sự thật: Git + file Markdown trong repo.</div>
@@ -429,7 +429,7 @@
       <nav class="toc" aria-label="Mục lục">
         <p class="toc-title">Trong trang này</p>
         <a href="#overview">Luồng tổng thể</a>
-        <a href="#task-types">Task nhỏ / lớn</a>
+        <a href="#task-types">Cỡ S / M / L</a>
         <a href="#queue">Task queue</a>
         <a href="#dependencies">Dependency</a>
         <a href="#waiting">Task phải chờ</a>
@@ -447,10 +447,10 @@
             <article class="step"><span class="step-num">01</span><h3>Intake</h3><p>Làm rõ yêu cầu, phạm vi và tiêu chí hoàn tất.</p><code>queue add</code></article>
             <article class="step"><span class="step-num">02</span><h3>Ready</h3><p>Chỉ chọn việc không còn blocker, theo thứ tự ưu tiên.</p><code>queue next</code></article>
             <article class="step"><span class="step-num">03</span><h3>Claim</h3><p>Một lệnh: đánh dấu In progress và tạo branch/worktree riêng. Nhận trùng sẽ bị từ chối.</p><code>queue start --branch</code></article>
-            <article class="step"><span class="step-num">04</span><h3>Plan</h3><p>Task nhỏ plan trong chat; change lớn dùng OpenSpec, propose trong worktree riêng (không untracked ở <code>dev</code>).</p><code>proposal → tasks</code></article>
+            <article class="step"><span class="step-num">04</span><h3>Plan</h3><p>Chọn cỡ trước: S không plan, M plan ngắn trong chat, L dùng OpenSpec, propose trong worktree riêng (không untracked ở <code>dev</code>).</p><code>S / M / L</code></article>
             <article class="step"><span class="step-num">05</span><h3>Build</h3><p>Code theo lát nhỏ, commit nhỏ trong nhánh; cả nhánh land một lần.</p><code>feat: / fix:</code></article>
-            <article class="step"><span class="step-num">06</span><h3>Verify</h3><p>Ship, check và chạy gate thay cho niềm tin cảm tính. Review tối đa 3 vòng, từ vòng 2 chỉ xem diff mới.</p><code>ship → check → review</code></article>
-            <article class="step final"><span class="step-num">07</span><h3>Land, close &amp; untask</h3><p>Fast-forward vào <code>dev</code>, đóng queue, gỡ worktree rồi archive change nếu có bằng <code>npm run archive</code>.</p><code>land → done → untask → archive</code></article>
+            <article class="step"><span class="step-num">06</span><h3>Verify</h3><p>Gate thay cho niềm tin cảm tính, <code>verify-app</code> chứng minh trên app thật, verifier ở context mới. Review tối đa 3 vòng, từ vòng 2 chỉ xem diff mới.</p><code>check → verify-app → review</code></article>
+            <article class="step final"><span class="step-num">07</span><h3>Land, close &amp; untask</h3><p>Fast-forward vào <code>dev</code>, đóng queue, gỡ worktree rồi archive change nếu có bằng <code>npm run archive</code>. Lỗi agent gây ra thành bài học: rule › lint/test › skill › CLAUDE.md.</p><code>land → done → untask → archive</code></article>
           </div>
         </section>
 
@@ -562,6 +562,7 @@
               <div class="cmd"><b>Đánh dấu chờ</b><code>npm run queue -- block T-XXX --reason "&lt;lý do&gt;"</code><button class="copy" data-copy='npm run queue -- block T-XXX --reason "&lt;lý do&gt;"'>Copy</button></div>
               <div class="cmd"><b>Hết chờ</b><code>npm run queue -- unblock T-XXX</code><button class="copy" data-copy="npm run queue -- unblock T-XXX">Copy</button></div>
               <div class="cmd"><b>Kiểm gate</b><code>npm run check</code><button class="copy" data-copy="npm run check">Copy</button></div>
+              <div class="cmd"><b>Tạo cách kiểm app</b><code>/devflow:verify-setup</code><button class="copy" data-copy="/devflow:verify-setup">Copy</button></div>
               <div class="cmd"><b>Land</b><code>npm run land</code><button class="copy" data-copy="npm run land">Copy</button></div>
               <div class="cmd"><b>Đóng task</b><code>npm run queue -- done T-XXX</code><button class="copy" data-copy="npm run queue -- done T-XXX">Copy</button></div>
               <div class="cmd"><b>Gỡ worktree</b><code>npm run untask -- feat/&lt;scope&gt;-&lt;mô-tả&gt;</code><button class="copy" data-copy="npm run untask -- feat/&lt;scope&gt;-&lt;mô-tả&gt;">Copy</button></div>
@@ -636,13 +637,13 @@
             <article class="guard"><div class="guard-mark">G5</div><h3>Format ngay khi sửa</h3><p>Hook PostToolUse chạy formatter của vùng (<code>areas[].format</code>) trên file vừa sửa, nên format không bao giờ tới gate hay reviewer.</p></article>
             <article class="guard"><div class="guard-mark">G6</div><h3>Chứng minh trên app thật</h3><p>Skill <code>verify-app</code> của dự án (tạo bằng <code>/devflow:verify-setup</code>) chạy app, kiểm tính năng bị chạm và trả bằng chứng. Bài học mỗi task đi lên tầng cao nhất: rule › lint/test › skill › CLAUDE.md.</p></article>
           </div>
-          <div class="rule-strip"><strong>Luật kết thúc</strong><span>Task nhỏ: <code>land → queue done → untask</code>. Change lớn: <code>land → queue done → untask → npm run archive -- &lt;change&gt;</code> (script từ chối thì <code>/opsx:archive</code> trong subagent). <code>/devflow:opsx-run</code> làm trọn chuỗi từ phiên chính ở lại repo chính — <code>/opsx:apply</code> chạy trong subagent context sạch, lệnh trong worktree qua <code>npm --prefix</code>, sau khi duyệt artifact có thể <code>/clear</code> rồi chạy; chế độ <code>auto-land</code> tự land khi plan đã duyệt chọn. Không archive trước khi code đã vào <code>dev</code>.</span></div>
+          <div class="rule-strip"><strong>Luật kết thúc</strong><span>Cỡ S / M: <code>land → queue done → untask</code>. Cỡ L (OpenSpec): <code>land → queue done → untask → npm run archive -- &lt;change&gt;</code> (script từ chối thì <code>/opsx:archive</code> trong subagent). <code>/devflow:opsx-run</code> làm trọn chuỗi từ phiên chính ở lại repo chính — <code>/opsx:apply</code> chạy trong subagent context sạch, lệnh trong worktree qua <code>npm --prefix</code>, sau khi duyệt artifact có thể <code>/clear</code> rồi chạy; chế độ <code>auto-land</code> tự land khi plan đã duyệt chọn. Không archive trước khi code đã vào <code>dev</code>.</span></div>
         </section>
 
         <section class="finish">
           <h2>Queue nói “làm gì”. Git nói “ai đang làm”. Gate nói “đủ tốt chưa”.</h2>
           <p>Ba lớp này tách trách nhiệm rõ ràng, nên cùng một workflow có thể dùng cho một agent, nhiều agent, task nhỏ hoặc change dài ngày.</p>
-          <div class="finish-seq" aria-label="Chuỗi workflow hoàn chỉnh"><span>intake</span><i>→</i><span>ready</span><i>→</i><span>claim</span><i>→</i><span>plan</span><i>→</i><span>build</span><i>→</i><span>gate</span><i>→</i><span>land</span><i>→</i><span>close</span><i>→</i><span>untask</span></div>
+          <div class="finish-seq" aria-label="Chuỗi workflow hoàn chỉnh"><span>intake</span><i>→</i><span>ready</span><i>→</i><span>claim</span><i>→</i><span>plan</span><i>→</i><span>build</span><i>→</i><span>gate</span><i>→</i><span>verify-app</span><i>→</i><span>land</span><i>→</i><span>close</span><i>→</i><span>untask</span><i>→</i><span>lesson</span></div>
         </section>
       </main>
     </div>
