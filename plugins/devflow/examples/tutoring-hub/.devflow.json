@@ -1,10 +1,11 @@
 {
-  "$comment": "tutoring-hub (Spring Boot + Angular monorepo) expressed as devflow config: same gate and hard rules as its scripts/git-flow.mjs + scripts/hard-rules.mjs.",
+  "$comment": "tutoring-hub (Spring Boot + Angular monorepo) expressed as devflow config: same gate and hard rules as its scripts/git-flow.mjs + scripts/hard-rules.mjs. gate.maxParallel 1: ng build and the Maven test JVMs side by side exhaust a laptop's RAM.",
   "integrationBranch": "dev",
   "releaseBranch": "main",
   "remote": "origin",
   "linkDirs": ["node_modules", "frontend/node_modules", ".husky/_"],
   "commitlint": true,
+  "gate": { "maxParallel": 1 },
   "areas": [
     {
       "name": "frontend",

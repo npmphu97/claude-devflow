@@ -94,7 +94,8 @@ feat/… fix/… chore/…  ──land (gate + ff)──►  dev  ──promote 
 ```
 
 Gate của `land` / `check`: commitlint `dev..HEAD` → `hard-rules --strict` → với mỗi vùng có file đổi:
-ESLint từng file (lỗi hoặc tăng cảnh báo so với `dev` → chặn) rồi các lệnh của vùng. Output đầy đủ
+ESLint từng file (lỗi hoặc tăng cảnh báo so với `dev` → chặn) rồi các lệnh của vùng. Các vùng chạy song song,
+tối đa `gate.maxParallel` (mặc định `0` = tất cả; `1` cho máy ít RAM). Output đầy đủ
 ghi vào file log trong git dir; terminal chỉ in 1 dòng khi xanh, 60 dòng cuối khi đỏ. Cache theo nội dung
 cây làm việc (kể cả chưa commit) + `dev`: `check` → verifier → `land` trên cùng nội dung chỉ chạy gate một lần.
 
