@@ -213,6 +213,83 @@ describe('flow: gate cache, parallel areas, isolated ship, cloud-push', () => {
     assert.match(out, /bad-loud-fail\.log/);
   });
 
+  it('gate.maxParallel: 1 runs the areas one after another; default runs them side by side', () => {
+    // Each command holds a lock file for 800 ms; a second command finding it taken fails.
+    const lock = join(mkdtempSync(join(tmpdir(), 'devflow-lock-')), 'running').replace(/\\/g, '/');
+    roots.push(dirname(lock));
+    const hold = `node -e "const fs=require('fs');fs.writeFileSync('${lock}','',{flag:'wx'});` +
+      `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,800);fs.unlinkSync('${lock}')"`;
+    const areas = [
+      { name: 'a', paths: ['a/'], commands: [{ label: 'hold', run: hold }] },
+      { name: 'b', paths: ['b/'], commands: [{ label: 'hold', run: hold }] },
+    ];
+    const gateRun = gate => {
+      const repo = mkRepo({ '.devflow.json': JSON.stringify({ ...DEV_FLOW_JSON, areas, ...(gate && { gate }) }), 'a/x.txt': 'x\n', 'b/y.txt': 'y\n' });
+      const wt = taskBranch(repo, 'feat/par');
+      writeFileSync(join(wt, 'a/x.txt'), 'x2\n');
+      writeFileSync(join(wt, 'b/y.txt'), 'y2\n');
+      return repo.run(FLOW, ['check'], { cwd: wt });
+    };
+    let r = gateRun({ maxParallel: 1 });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    r = gateRun(null);
+    assert.notEqual(r.status, 0, 'areas should overlap by default');
+    assert.match(r.stdout + r.stderr, /EEXIST/);
+  });
+
+  it('eslint base counts: one in-process run through the API, CLI per file when there is no API', () => {
+    // Fake eslint: a warning per "WARN" in the text. The CLI records every --stdin call.
+    const count = 't=>(t.match(/WARN/g)||[]).length';
+    const bin = `const fs=require('fs'),path=require('path');const a=process.argv.slice(2);const n=${count};
+if(a.includes('--stdin')){fs.appendFileSync(path.join(__dirname,'stdin-calls'),'x');
+  const f=a[a.indexOf('--stdin-filename')+1];
+  console.log(JSON.stringify([{filePath:path.resolve(f),errorCount:0,warningCount:n(fs.readFileSync(0,'utf8'))}]));}
+else console.log(JSON.stringify(a.filter(x=>!x.startsWith('-')&&x!=='json').map(f=>({filePath:path.resolve(f),errorCount:0,warningCount:n(fs.readFileSync(f,'utf8'))}))));`;
+    const withApi = `const n=${count};class ESLint{async lintText(t,{filePath}){return[{filePath,errorCount:0,warningCount:n(t)}]}}module.exports={ESLint};`;
+    const setup = api => {
+      const cfg = { ...DEV_FLOW_JSON, areas: [{ name: 'web', paths: ['src/'], eslint: { cwd: '.', extensions: ['.js'] }, commands: [] }] };
+      const repo = mkRepo({
+        '.gitignore': 'node_modules/\n',
+        '.devflow.json': JSON.stringify(cfg),
+        'src/a.js': 'WARN WARN\n',
+        'src/b.js': 'WARN\n',
+        'node_modules/eslint/package.json': JSON.stringify({ name: 'eslint', main: 'lib/api.js' }),
+        'node_modules/eslint/bin/eslint.js': bin,
+        'node_modules/eslint/lib/api.js': api,
+      });
+      const wt = taskBranch(repo, 'feat/lint');
+      return { repo, wt, calls: () => (existsSync(join(repo.root, 'node_modules/eslint/bin/stdin-calls'))
+        ? readFileSync(join(repo.root, 'node_modules/eslint/bin/stdin-calls'), 'utf8').length : 0) };
+    };
+
+    let { repo, wt, calls } = setup(withApi);
+    writeFileSync(join(wt, 'src/a.js'), 'WARN WARN\nmore\n');
+    writeFileSync(join(wt, 'src/b.js'), 'WARN\nmore\n');
+    let r = repo.run(FLOW, ['check'], { cwd: wt });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /src\/a\.js: 0 error\(s\), 2 warning\(s\) \(dev: 2\)/);
+    assert.equal(calls(), 0, 'the API path must not spawn eslint per file');
+    writeFileSync(join(wt, 'src/a.js'), 'WARN WARN WARN\n');
+    r = repo.run(FLOW, ['check'], { cwd: wt });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stdout + r.stderr, /warnings increased in src\/a\.js/);
+
+    ({ repo, wt, calls } = setup('module.exports={};'));
+    writeFileSync(join(wt, 'src/a.js'), 'WARN WARN\nmore\n');
+    writeFileSync(join(wt, 'src/b.js'), 'WARN\nmore\n');
+    r = repo.run(FLOW, ['check'], { cwd: wt });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /src\/b\.js: 0 error\(s\), 1 warning\(s\) \(dev: 1\)/);
+    assert.equal(calls(), 2, 'no API: one CLI run per file read from dev');
+  });
+
+  it('doctor rejects a bad gate.maxParallel', () => {
+    const repo = mkRepo({ '.devflow.json': JSON.stringify({ ...DEV_FLOW_JSON, gate: { maxParallel: -1 } }), 'a.txt': 'a\n' });
+    const r = repo.run(FLOW, ['doctor']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stdout, /gate\.maxParallel must be an integer/);
+  });
+
   it('a failing area command stops the gate and prints its output', () => {
     const cfg = { ...DEV_FLOW_JSON, areas: [
       { name: 'ok', paths: ['a/'], commands: [{ label: 'ok', run: 'node -e "process.exit(0)"' }] },

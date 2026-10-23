@@ -1,6 +1,6 @@
 {
   "name": "devflow",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Local-first agent workflow for any repo: dev-loop phases, worktree per task, land gate (commitlint + hard rules + per-area lint/build/test) and fast-forward-only dev/main with version tags, independent verifier, handoff notes, retro metrics, and a guard hook.",
   "author": { "name": "Nguyen Phan Minh Phu" },
   "keywords": ["workflow", "git", "local", "gate", "openspec", "verifier"]

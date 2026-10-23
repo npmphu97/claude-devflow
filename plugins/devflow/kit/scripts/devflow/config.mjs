@@ -23,6 +23,8 @@ export const DEFAULTS = {
   // Gate areas: files under `paths` trigger the area's eslint delta check and commands.
   // { name, paths: ["frontend/"], eslint?: { cwd, extensions }, commands: [{ label, cwd, run, runWin? }] }
   areas: [],
+  // maxParallel: how many touched areas the gate runs at once (0 = all). 1 trades time for peak RAM.
+  gate: { maxParallel: 0 },
   // Files whose "version" must never be hand-edited (the tag made by promote is the real version).
   // "package.json" (json key) | { file: "pom.xml", type: "maven" } | { file, regex }
   versionFiles: ['package.json'],
