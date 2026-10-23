@@ -6,8 +6,8 @@ description: Run one code task through the team workflow (intake → size S/M/L 
 # dev-loop
 
 Quy trình chuẩn cho một task. Chọn cỡ trước, rồi làm tuần tự **các pha của cỡ đó**. Lý do từng pha:
-`docs/AGENT_WORKFLOW.md`. Tiêu chí OpenSpec, bảng ví dụ, ma trận test, file plan: `reference.md` cạnh skill này
-(đọc mục cần khi được trỏ tới). Repo chưa có `.devflow.json` → đề xuất chạy `/devflow:init` trước.
+`docs/AGENT_WORKFLOW.md`. Tiêu chí OpenSpec, bảng ví dụ, ma trận test, file plan: `${CLAUDE_SKILL_DIR}/reference.md`
+(gọi tắt `reference.md` bên dưới; đọc mục cần khi được trỏ tới). Repo chưa có `.devflow.json` → đề xuất chạy `/devflow:init` trước.
 
 ## 0. Intake
 - Đọc yêu cầu. Thiếu acceptance criteria, phạm vi (module, màn hình, vai trò) hoặc không rõ có đụng

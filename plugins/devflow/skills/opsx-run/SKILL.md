@@ -7,7 +7,7 @@ description: Run a whole OpenSpec change whose artifacts are already approved �
 
 Điều phối pha 3–7 của `devflow:dev-loop` cho một change OpenSpec **đã duyệt artifact**, để người dùng chỉ
 duyệt artifact rồi nhận một báo cáo cuối. Chạy ở **phiên chính** (subagent không gọi lồng được subagent).
-Lý do dùng subagent cho apply: mục "Cỡ L" trong `reference.md` của skill `dev-loop`.
+Lý do dùng subagent cho apply: mục "Cỡ L" trong `${CLAUDE_PLUGIN_ROOT}/skills/dev-loop/reference.md`.
 
 **Phiên chính ở lại repo chính suốt chuỗi, không `EnterWorktree`.** Lệnh chạy trong worktree `<wt>` bằng
 `npm --prefix "<wt>" run <script>` hoặc `git -C "<wt>"`; nhờ vậy sau land, `untask` và archive chạy thẳng từ

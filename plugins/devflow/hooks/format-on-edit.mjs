@@ -29,4 +29,7 @@ if (!fmt || (fmt.extensions && !fmt.extensions.includes(extname(file)))) process
 
 const cwd = join(root, fmt.cwd ?? '');
 const run = process.platform === 'win32' && fmt.runWin ? fmt.runWin : fmt.run;
-spawnSync(`${run} "${relative(cwd, file)}"`, { cwd, shell: true, stdio: 'ignore', timeout: 30000 });
+// Quoted for the shell `run` goes through: the path must stay one argument, never shell syntax.
+const path = relative(cwd, file);
+const arg = process.platform === 'win32' ? `"${path}"` : `'${path.replace(/'/g, `'\\''`)}'`;
+spawnSync(`${run} ${arg}`, { cwd, shell: true, stdio: 'ignore', timeout: 30000 });
