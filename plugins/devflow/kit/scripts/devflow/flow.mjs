@@ -16,7 +16,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdtempSync, symlinkSync, lstatSync, unlinkSync, statSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { repoRoot, mainCheckout, loadConfig, commandHint } from './config.mjs';
 import { queueFile, load as loadQueue, itemsOf, readyItems, describe as describeTask } from './queue-lib.mjs';
 
@@ -240,15 +241,61 @@ async function eslintCurrent(eslintCwd, files) {
   return new Map(files.map((f, i) => [f, sumCounts(byFile.has(rels[i]) ? [byFile.get(rels[i])] : [])]));
 }
 
-/** ESLint errors+warnings of one file as it is at `baseRef` (read from `baseFile` when the file was moved). */
-async function eslintBase(eslintCwd, file, baseRef, baseFile = file) {
+/** CLI fallback: ESLint errors+warnings of `text` linted as `file`, one eslint process. */
+async function eslintStdin(eslintCwd, file, text) {
   const cwd = join(REPO_ROOT, eslintCwd);
   const rel = relative(cwd, join(REPO_ROOT, file)).replace(/\\/g, '/');
-  const base = git(['show', `${baseRef}:${baseFile}`], { allowFail: true });
-  if (base === null) return { errors: 0, warnings: 0 }; // new file
-  const r = await runCapture(process.execPath, [eslintBin(eslintCwd), '-f', 'json', '--stdin', '--stdin-filename', rel], { cwd, input: base });
+  const r = await runCapture(process.execPath, [eslintBin(eslintCwd), '-f', 'json', '--stdin', '--stdin-filename', rel], { cwd, input: text });
   if (!r.stdout?.trim().startsWith('[')) die(`eslint could not run on ${file}:\n${r.stderr}`);
   return sumCounts(JSON.parse(r.stdout));
+}
+
+/** An ESLint instance from the same package the CLI runs (eslintBin), through its Node API: loadESLint
+ * picks flat config or eslintrc like the CLI does (v8.57+, v9); older v8 has only ESLint. null when the
+ * API cannot be loaded — the caller falls back to the CLI. */
+async function eslintApi(eslintCwd) {
+  try {
+    const mod = await import(pathToFileURL(createRequire(eslintBin(eslintCwd)).resolve('eslint')).href);
+    const api = mod.default ?? mod;
+    const cwd = join(REPO_ROOT, eslintCwd);
+    const ESLintClass = api.loadESLint ? await api.loadESLint({ cwd }) : api.ESLint;
+    return ESLintClass ? new ESLintClass({ cwd }) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** ESLint errors+warnings of each file as it is at `baseRef` (read from its old path when renamed).
+ * Through the API all files share one process and the parser / type program is loaded once; the CLI
+ * fallback costs a process per file, so only a few run at a time. */
+async function eslintBases(eslintCwd, files, baseRef, renamed) {
+  const api = files.length ? await eslintApi(eslintCwd) : null;
+  const one = async f => {
+    const base = git(['show', `${baseRef}:${renamed.get(f) ?? f}`], { allowFail: true });
+    if (base === null) return [f, { errors: 0, warnings: 0 }]; // new file
+    if (!api) return [f, await eslintStdin(eslintCwd, f, base)];
+    try {
+      return [f, sumCounts(await api.lintText(base, { filePath: join(REPO_ROOT, f) }))];
+    } catch (e) {
+      return die(`eslint could not run on ${f} (as in ${baseRef}):\n${e.message}`);
+    }
+  };
+  return new Map(await mapLimit(files, api ? 1 : 3, one));
+}
+
+/** `fn` over `items`, at most `limit` at a time (0 or less: all at once); results in input order. */
+async function mapLimit(items, limit, fn) {
+  if (!(limit > 0) || limit >= items.length) return Promise.all(items.map(fn));
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: limit }, worker));
+  return results;
 }
 
 /** Files renamed vs the integration branch (committed or not): new path → old path. */
@@ -273,8 +320,7 @@ async function verifyArea(area, areaFiles) {
     const renamed = renamedFromDev();
     const lintable = areaFiles.filter(f => f.startsWith(prefix) && extensions.some(e => f.endsWith(e)) && existsSync(join(REPO_ROOT, f)));
     const counts = lintable.length ? await eslintCurrent(cwd, lintable) : new Map();
-    const befores = new Map(await Promise.all(lintable.filter(f => counts.get(f).warnings > 0)
-      .map(async f => [f, await eslintBase(cwd, f, DEV, renamed.get(f))])));
+    const befores = await eslintBases(cwd, lintable.filter(f => counts.get(f).warnings > 0), DEV, renamed);
     for (const f of lintable) {
       const now = counts.get(f);
       const from = renamed.has(f) ? ` at ${renamed.get(f)}` : '';
@@ -316,7 +362,8 @@ function writeLog(name, text) {
   return file;
 }
 
-/** Every area of .devflow.json touched by `files`, in parallel (areas are independent). */
+/** Every area of .devflow.json touched by `files`, in parallel (areas are independent), at most
+ * `gate.maxParallel` at a time: a JVM build next to a frontend build can exhaust the RAM of a laptop. */
 async function verify(files) {
   const touched = cfg.areas.map(a => ({ area: a, files: files.filter(f => a.paths.some(p => f.startsWith(p))) }))
     .filter(t => t.files.length);
@@ -324,7 +371,7 @@ async function verify(files) {
   if (!touched.length) return console.log('\n▶ verify: no changed file belongs to a gate area — nothing to run');
 
   const show = r => (process.stdout.write(`${r.out}\n`), r);
-  const results = await Promise.all(touched.map(t => verifyArea(t.area, t.files).then(show)));
+  const results = await mapLimit(touched, cfg.gate?.maxParallel, t => verifyArea(t.area, t.files).then(show));
   if (results.some(r => !r.ok)) die('verify failed (see the output above). Nothing was committed/merged.');
   console.log('  ✔ verify passed');
 }
@@ -657,6 +704,8 @@ function doctor() {
   else ok(`git identity: ${id('user.name')} <${id('user.email')}>`);
 
   if (!cfg.areas.length) warn('no gate areas in .devflow.json — land will run commitlint + hard rules only.');
+  const par = cfg.gate?.maxParallel;
+  if (!Number.isInteger(par) || par < 0) bad(`gate.maxParallel must be an integer ≥ 0 (0 = all areas at once), got ${JSON.stringify(par)}.`);
   for (const a of cfg.areas) {
     for (const p of a.paths ?? []) {
       const full = join(REPO_ROOT, p);
