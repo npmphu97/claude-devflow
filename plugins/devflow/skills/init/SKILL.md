@@ -13,7 +13,14 @@ Glob `**/devflow/skills/init/install.mjs` dưới `~/.claude/plugins/`.
 
 ## Cập nhật (repo đã có devflow)
 `node <install.mjs> --update` chỉ làm mới `scripts/devflow/*.mjs` theo bản plugin hiện tại. Đọc diff
-(`git diff scripts/devflow`), báo người dùng, commit `chore(devflow): update scripts` qua `npm run ship`.
+(`git diff scripts/devflow`), báo người dùng, rồi xử lý các dòng `!` script in ra:
+- **Section CLAUDE.md dài hơn mẫu** (trước 0.10 là ~130 dòng): đề xuất thay bằng mẫu mới
+  `${CLAUDE_PLUGIN_ROOT}/kit/templates/CLAUDE.devflow.md`, **giữ nguyên phần dự án đã điền** (lệnh build / test,
+  luật riêng, vùng buộc `manual`, ví dụ quy tắc nghiệp vụ, bài học). Phần chung đã chuyển vào skill `dev-loop`
+  (`reference.md`). Trình diff cho người dùng duyệt trước khi ghi.
+- `stopGate` / `areas[].format` chưa có trong `.devflow.json` → hỏi người dùng có bật không (mục 4 bên dưới).
+- Chưa có `.claude/skills/verify-app/` và dự án có app chạy được → đề xuất `/devflow:verify-setup`.
+Commit `chore(devflow): update scripts` qua `npm run ship`.
 
 ## Cài mới
 
@@ -35,6 +42,12 @@ Glob `**/devflow/skills/init/install.mjs` dưới `~/.claude/plugins/`.
      `{ "level": "ERROR", "files": "Controller\\.java$", "added": "^\\s*import\\s+[\\w.]+Repository;", "msg": "controller không gọi repository" }`.
      `unlessChanged` tắt luật khi có file khớp được đổi (ví dụ đổi entity mà đã có script migration).
      Luật cần logic → `rulesModule` (xem `examples/` trong plugin).
+   - `areas[].format`: formatter mà hook PostToolUse chạy trên từng file vừa sửa (đường dẫn file nối vào cuối
+     lệnh), ví dụ `{ "cwd": "web", "run": "npx --no-install prettier --write --ignore-unknown" }`. Script dò sẵn
+     prettier / gofmt / ruff / black; thiếu thì hỏi người dùng dự án format bằng gì. Không có → bỏ trống.
+   - `stopGate` (bản nháp: `true`): hook Stop không cho agent kết thúc lượt trên nhánh task khi nội dung chưa qua
+     `check` (cache nên chỉ tốn thời gian một lần cho mỗi nội dung). Gate chậm (> vài phút) mà người dùng không
+     muốn → `false`.
    - Repo dùng tên nhánh khác (ví dụ `develop` / `master`) → sửa `integrationBranch` / `releaseBranch`.
 5. **Cài tooling** (khi có `package.json`, hỏi trước vì cần mạng):
    `npm i -D @commitlint/cli @commitlint/config-conventional husky`, `npm pkg set scripts.prepare=husky`,
@@ -43,9 +56,12 @@ Glob `**/devflow/skills/init/install.mjs` dưới `~/.claude/plugins/`.
 6. **OpenSpec** (nếu chọn): `npx @fission-ai/openspec init --tools claude` (hoặc cài devDependency
    `@fission-ai/openspec`), rồi thay `openspec/config.yaml` bằng
    `${CLAUDE_PLUGIN_ROOT}/kit/templates/openspec-config.yaml` và điền các ô `<...>`. Không dùng → xoá mục
-   "OpenSpec: khi nào dùng" trong section CLAUDE.md vừa thêm.
-7. **CLAUDE.md:** điền các ô `<...>` của section devflow (lệnh build / test + baseline, luật cứng riêng,
-   scope commit). Chưa có phần tổng quan / kiến trúc → đề xuất người dùng chạy `/init` của Claude Code.
+   "OpenSpec" trong section CLAUDE.md vừa thêm.
+7. **CLAUDE.md:** điền các ô `<...>` của section devflow (lệnh build / test + baseline, vùng buộc `manual`, luật
+   cứng riêng, scope commit). Giữ section ngắn: chỉ ghi điều agent không tự đọc ra từ code. Chưa có phần tổng quan
+   / kiến trúc → đề xuất người dùng chạy `/init` của Claude Code.
+7.5. **Kiểm app thật:** dự án có app chạy được → đề xuất chạy `/devflow:verify-setup` ngay (tạo skill
+   `verify-app` của dự án); không có → xoá mục "Kiểm app thật" trong CLAUDE.md.
 8. **Kiểm chứng:** `npm run doctor` (repo sẵn sàng: nhánh, tooling gate, hook), rồi `npm run check`
    trên nhánh hiện tại (gate phải chạy được, xanh hoặc đỏ có lý do rõ), `npm run hard-rules`.
 9. **Commit** (hỏi trước): tạo worktree / nhánh `chore/devflow-setup`, commit bằng

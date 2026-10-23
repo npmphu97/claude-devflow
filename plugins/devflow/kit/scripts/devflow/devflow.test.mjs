@@ -15,6 +15,7 @@ const FLOW = join(HERE, 'flow.mjs');
 const HARD_RULES = join(HERE, 'hard-rules.mjs');
 const QUEUE = join(HERE, 'queue.mjs');
 const WCLEAN = join(HERE, 'worktrees-clean.mjs');
+const HOOKS = join(HERE, '..', '..', '..', 'hooks');
 const node = process.execPath;
 const ctx = (current, guard = {}) => ({
   dev: 'dev', main: 'main', current,
@@ -655,5 +656,47 @@ renameSync('openspec/changes/' + process.argv[3], 'openspec/changes/archive/' + 
     assert.equal(repo.git(['log', 'dev', '--format=%s', '-1']), 'chore(openspec): archive foo');
     assert.equal(repo.git(['ls-tree', '--name-only', 'dev', 'openspec/changes/foo/tasks.md']), '');
     assert.doesNotMatch(repo.git(['worktree', 'list']), /archive-foo/);
+  });
+});
+
+describe('hooks: stop gate, format on edit', () => {
+  const hook = (repo, name, payload) => repo.run(join(HOOKS, name), [], { input: JSON.stringify(payload) });
+  const blocks = r => (assert.equal(r.status, 0, r.stderr), /"decision":"block"/.test(r.stdout));
+
+  it('stop gate blocks a task branch whose content has not passed check, once per stop', () => {
+    const repo = mkRepo({ '.devflow.json': JSON.stringify({ ...DEV_FLOW_JSON, stopGate: true }), 'a.txt': 'a\n' });
+    assert.equal(repo.run(FLOW, ['task', '--', 'feat/stop']).status, 0);
+    const wt = join(repo.root, '.claude', 'worktrees', 'feat-stop');
+    assert.equal(blocks(hook(repo, 'stop-gate.mjs', { cwd: wt })), false); // nothing changed yet
+    writeFileSync(join(wt, 'a.txt'), 'a\nb\n');
+    assert.equal(blocks(hook(repo, 'stop-gate.mjs', { cwd: wt })), true);
+    assert.equal(blocks(hook(repo, 'stop-gate.mjs', { cwd: wt, stop_hook_active: true })), false);
+    assert.equal(repo.run(FLOW, ['check'], { cwd: wt }).status, 0);
+    assert.equal(blocks(hook(repo, 'stop-gate.mjs', { cwd: wt })), false); // same content passed
+    writeFileSync(join(wt, 'a.txt'), 'a\nc\n');
+    assert.equal(blocks(hook(repo, 'stop-gate.mjs', { cwd: wt })), true); // content moved on
+  });
+
+  it('stop gate leaves dev / main and repos without stopGate alone', () => {
+    const on = mkRepo({ '.devflow.json': JSON.stringify({ ...DEV_FLOW_JSON, stopGate: true }), 'a.txt': 'a\n' });
+    on.git(['checkout', '-q', 'dev']);
+    writeFileSync(join(on.root, 'a.txt'), 'dirty\n');
+    assert.equal(blocks(hook(on, 'stop-gate.mjs', { cwd: on.root })), false);
+    const off = mkRepo({ '.devflow.json': JSON.stringify(DEV_FLOW_JSON), 'a.txt': 'a\n' });
+    off.git(['checkout', '-q', '-b', 'feat/x']);
+    writeFileSync(join(off.root, 'a.txt'), 'dirty\n');
+    assert.equal(blocks(hook(off, 'stop-gate.mjs', { cwd: off.root })), false);
+  });
+
+  it('format hook runs the owning area formatter on the edited file only', () => {
+    const fmt = { cwd: 'web', run: `node -e "require('fs').appendFileSync(process.argv[1], 'fmt\\n')"`, extensions: ['.js'] };
+    const cfg = { ...DEV_FLOW_JSON, areas: [{ name: 'web', paths: ['web/'], commands: [], format: fmt }] };
+    const repo = mkRepo({ '.devflow.json': JSON.stringify(cfg), 'web/src/a.js': 'a\n', 'web/b.txt': 'b\n', 'c.js': 'c\n' });
+    for (const f of ['web/src/a.js', 'web/b.txt', 'c.js']) {
+      assert.equal(hook(repo, 'format-on-edit.mjs', { tool_name: 'Edit', tool_input: { file_path: join(repo.root, f) } }).status, 0);
+    }
+    assert.equal(readFileSync(join(repo.root, 'web/src/a.js'), 'utf8'), 'a\nfmt\n');
+    assert.equal(readFileSync(join(repo.root, 'web/b.txt'), 'utf8'), 'b\n'); // extension not listed
+    assert.equal(readFileSync(join(repo.root, 'c.js'), 'utf8'), 'c\n'); // no area owns it
   });
 });

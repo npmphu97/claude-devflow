@@ -35,6 +35,7 @@ function write(rel, content, { overwrite = false } = {}) {
   did(verb, rel);
 }
 const tpl = name => readFileSync(join(KIT, 'templates', name), 'utf8');
+const readJson = p => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 
 // ---------- 1. vendored scripts ----------
 const scriptsSrc = join(KIT, 'scripts', 'devflow');
@@ -61,6 +62,17 @@ if (flag('update')) {
     console.log(`    add "**/.claude/task-queue.md*" to .gitignore${tracked ? ', then: git rm --cached .claude/task-queue.md (commit both as a chore task)' : ''}`);
   }
   if (!existsSync(join(root, '.claude', 'settings.json'))) console.log('  ! no .claude/settings.json — rerun without --update to get the devflow permission allowlist.');
+  // 0.10 moved the generic workflow text out of CLAUDE.md into the dev-loop skill.
+  const md = existsSync(join(root, 'CLAUDE.md')) ? readFileSync(join(root, 'CLAUDE.md'), 'utf8') : '';
+  const sec = md.match(/<!-- devflow:start[\s\S]*?<!-- devflow:end -->/)?.[0];
+  const tplLines = tpl('CLAUDE.devflow.md').trimEnd().split('\n').length;
+  if (sec && sec.split('\n').length > tplLines + 25) {
+    console.log(`  ! CLAUDE.md devflow section is ${sec.split('\n').length} lines, the current template ${tplLines}: replace it with kit/templates/CLAUDE.devflow.md, keeping what the project filled in (skill devflow:init, "Cập nhật").`);
+  }
+  const conf = readJson(join(root, '.devflow.json')) ?? {};
+  if (conf.stopGate === undefined) console.log('  ! .devflow.json has no "stopGate" — set it to true to make the agent pass `check` before ending a turn on a task branch.');
+  if (!(conf.areas ?? []).some(a => a.format)) console.log('  ! no areas[].format in .devflow.json — add the project formatter so edited files are formatted by the PostToolUse hook.');
+  if (!existsSync(join(root, '.claude', 'skills', 'verify-app', 'SKILL.md'))) console.log('  ! no .claude/skills/verify-app — run /devflow:verify-setup if the project has an app to run.');
   process.exit(0);
 }
 
@@ -68,7 +80,6 @@ if (flag('update')) {
 const SKIP = new Set(['node_modules', '.git', '.claude', '.husky', 'docs', 'dist', 'build', 'target', 'out', 'scripts', 'openspec', '.idea', '.vscode']);
 const dirs = ['.', ...readdirSync(root).filter(d => !SKIP.has(d) && !d.startsWith('.') && statSync(join(root, d)).isDirectory())];
 const has = (d, f) => existsSync(join(root, d, f));
-const readJson = p => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 
 const areas = [];
 const versionFiles = [];
@@ -90,7 +101,8 @@ for (const d of dirs) {
     } else if (pkg.scripts?.test) testHints.push(`${name}: "npm test" (${pkg.scripts.test}) is interactive — add a CI-style test command by hand`);
     const isTooling = d === '.' && !commands.length && !deps.eslint;
     if (!isTooling && (commands.length || deps.eslint)) {
-      areas.push({ name, paths, ...(deps.eslint ? { eslint: { cwd: d, extensions: ['.ts', '.tsx', '.js', '.jsx', '.vue', '.html'] } } : {}), commands });
+      areas.push({ name, paths, ...(deps.eslint ? { eslint: { cwd: d, extensions: ['.ts', '.tsx', '.js', '.jsx', '.vue', '.html'] } } : {}), commands,
+        ...(deps.prettier ? { format: { cwd: d, run: 'npx --no-install prettier --write --ignore-unknown' } } : {}) });
     }
   }
   if (has(d, 'pom.xml')) {
@@ -107,9 +119,13 @@ for (const d of dirs) {
       run: wrapper ? './gradlew test' : 'gradle test', runWin: wrapper ? 'gradlew.bat test' : 'gradle test' }] });
   }
   if (has(d, 'pyproject.toml') || has(d, 'requirements.txt')) {
-    areas.push({ name: `${name}-python`, paths, commands: [{ label: `${name}: pytest`, cwd: d, run: 'python -m pytest -q' }] });
+    const py = ['pyproject.toml', 'requirements.txt', 'requirements-dev.txt'].map(f => has(d, f) ? readFileSync(join(root, d, f), 'utf8') : '').join('\n');
+    const pyFormat = /\bruff\b/.test(py) ? 'ruff format' : /\bblack\b/.test(py) ? 'black -q' : null;
+    areas.push({ name: `${name}-python`, paths, commands: [{ label: `${name}: pytest`, cwd: d, run: 'python -m pytest -q' }],
+      ...(pyFormat ? { format: { cwd: d, run: pyFormat, extensions: ['.py'] } } : {}) });
   }
-  if (has(d, 'go.mod')) areas.push({ name: `${name}-go`, paths, commands: [{ label: `${name}: go test`, cwd: d, run: 'go vet ./... && go test ./...' }] });
+  if (has(d, 'go.mod')) areas.push({ name: `${name}-go`, paths, commands: [{ label: `${name}: go test`, cwd: d, run: 'go vet ./... && go test ./...' }],
+    format: { cwd: d, run: 'gofmt -w', extensions: ['.go'] } });
   if (has(d, 'Cargo.toml')) areas.push({ name: `${name}-rust`, paths, commands: [{ label: `${name}: cargo test`, cwd: d, run: 'cargo test' }] });
   if (readdirSync(join(root, d)).some(f => /\.(sln|csproj)$/.test(f))) {
     areas.push({ name: `${name}-dotnet`, paths, commands: [{ label: `${name}: dotnet test`, cwd: d, run: 'dotnet test' }] });
@@ -130,6 +146,7 @@ const config = {
   areas,
   versionFiles: versionFiles.length ? versionFiles : ['package.json'],
   rules: [],
+  stopGate: true,
 };
 write('.devflow.json', `${JSON.stringify(config, null, 2)}\n`);
 
@@ -178,7 +195,7 @@ if (!flag('no-package-json') && (existsSync(pkgFile) || flag('create-package-jso
 const claudeMd = join(root, 'CLAUDE.md');
 const section = tpl('CLAUDE.devflow.md');
 if (existsSync(claudeMd)) {
-  if (readFileSync(claudeMd, 'utf8').includes('<!-- devflow:start -->')) did('kept', 'CLAUDE.md (devflow section already there)');
+  if (readFileSync(claudeMd, 'utf8').includes('<!-- devflow:start')) did('kept', 'CLAUDE.md (devflow section already there)');
   else {
     if (!dryRun) appendFileSync(claudeMd, `\n${section}`);
     did('appended', 'CLAUDE.md (devflow section — fill the <...> placeholders)');
