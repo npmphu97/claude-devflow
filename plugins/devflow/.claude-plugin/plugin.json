@@ -1,7 +1,7 @@
 {
   "name": "devflow",
-  "version": "0.10.2",
-  "description": "Local-first agent workflow for any repo: dev-loop phases, worktree per task, land gate (commitlint + hard rules + per-area lint/build/test) and fast-forward-only dev/main with version tags, independent verifier, project verify-app skill, handoff notes, retro metrics, and guard / format / stop-gate hooks.",
+  "version": "0.11.0",
+  "description": "Local-first agent workflow for any repo: dev-loop phases, worktree per task, land gate (commitlint + hard rules + per-area lint/build/test) and fast-forward-only dev/main with version tags, independent verifier, project verify-app skill, handoff notes, retro metrics, and guard / format / stop-gate hooks. GitHub mode: task branches go through pull requests checked by the same gate in GitHub Actions.",
   "author": { "name": "Nguyen Phan Minh Phu" },
   "keywords": ["workflow", "git", "local", "gate", "openspec", "verifier"]
 }

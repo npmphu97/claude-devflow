@@ -86,7 +86,7 @@ Không ghi đè file đã có. OpenSpec là tuỳ chọn (`openspec init --tools
 
 | Loại | Tên | Vai trò |
 |---|---|---|
-| Skill | `/devflow:init` | Gắn / cập nhật devflow trong repo |
+| Skill | `/devflow:init` | Gắn / cập nhật devflow trong repo (`--github`: chế độ PR + CI) |
 | Skill | `/devflow:dev-loop` | Một task: intake → **chọn cỡ S / M / L** (S: diff tả trong một câu, không plan, `check` rồi land; M: plan ngắn; L: OpenSpec) → analyze → plan (người duyệt) → implement → verify (gate + `verify-app`) → self-review (tối đa 3 vòng, từ vòng 2 chỉ review diff mới, gom finding theo loại) → land → **bài học** đặt ở tầng cao nhất (rule › lint/test › skill › CLAUDE.md) |
 | Skill | `/devflow:verify-setup` | Tạo / cập nhật skill riêng của dự án `.claude/skills/verify-app/` (khởi động app, tài khoản, bản đồ tính năng + cách kiểm từng tính năng), chạy thử để chứng minh. `verify-app` chạy trong subagent, trả bằng chứng theo tính năng |
 | Skill | `/devflow:opsx-run` | Chạy trọn một change OpenSpec đã duyệt artifact: worktree → apply (subagent) → check → verifier → review → commit → land theo chế độ `auto-land` / `manual` → untask + `npm run archive` → một báo cáo cuối. Phiên chính ở lại repo chính (lệnh trong worktree chạy bằng `npm --prefix`), nên sau khi duyệt artifact có thể `/clear` rồi chạy |
@@ -103,6 +103,46 @@ Không ghi đè file đã có. OpenSpec là tuỳ chọn (`openspec init --tools
 | Hook | Stop | Khi `stopGate: true`: trên nhánh task, agent không kết thúc lượt khi nội dung hiện tại chưa qua `check` (đọc cùng cache với gate; chặn một lần mỗi lần dừng, nên dừng có chủ đích vẫn được) |
 
 Hook chỉ hoạt động trong repo có `.devflow.json` — cài plugin không đổi hành vi ở dự án khác.
+
+## Chế độ GitHub (PR + CI, chạy được trên cloud)
+
+Mặc định devflow chạy **local** (clone là nguồn sự thật, không PR, không CI). Đặt `"mode": "github"` trong
+`.devflow.json` (hoặc `/devflow:init` với `--github`) khi repo sống trên GitHub, có phiên Claude Code trên cloud hay
+nhiều người cùng làm:
+
+```
+feat/… fix/… claude/…  ──npm run pr──►  pull request  ──CI: devflow gate + review──►  merge trên GitHub ──► main
+                        (gate local, push nhánh, mở PR)                                    └── npm run release → tag vX.Y.Z
+```
+
+| | Local | GitHub |
+|---|---|---|
+| Nguồn sự thật | clone local | GitHub |
+| Nhánh tích hợp | `dev` (fast-forward) | thường `main` (GitHub flow); `dev` nếu `--create-dev` |
+| Đưa task vào | `npm run land` | `npm run pr` (`land` = `pr`): gate → push nhánh task → mở PR (`gh`, hoặc in `DEVFLOW_OPEN_PR` cho công cụ GitHub của phiên cloud) |
+| Kiểm bằng máy | gate local | gate local **và** CI `.github/workflows/devflow-gate.yml` (`check --ci --base origin/<base>`) |
+| Ai merge | script (fast-forward) | người, trên GitHub, khi CI xanh |
+| Phát hành | `npm run promote` (ff + tag) | `npm run release` (tag trên `origin/main`, push tag) |
+| Dọn nhánh | `npm run sync` | `npm run sync` (fetch --prune, ff `main` local, xoá nhánh đã merge) |
+| Hook chặn push | mọi `git push` tay | chỉ push nhánh bảo vệ / force / xoá / tag tay / nhánh ngoài `github.pushBranches`; `gh pr merge`, `gh release` |
+
+Cấu hình thêm (đều có mặc định):
+
+```jsonc
+{
+  "mode": "github",
+  "integrationBranch": "main", "releaseBranch": "main", "remote": "origin",
+  "cloudBranches": "^(ccr-|claude/)[\\w./-]+$",          // nhánh phiên cloud mà cloud-push được push
+  "github": {
+    "pushBranches": "^(feat|fix|chore|docs|refactor|perf|test|build|ci|style|revert)/|^(ccr-|claude/)",
+    "draft": false,          // mở PR dạng draft
+    "fetchOnStart": true     // SessionStart fetch origin/<tích hợp> để gate so với bản đã merge thật
+  }
+}
+```
+
+Sau khi bật: thêm vào workflow các bước cài đặt mà lệnh của vùng cần; đặt check "devflow gate" thành required trong
+branch protection; dùng merge commit, hoặc squash với tiêu đề PR theo Conventional Commits để `release` tính đúng version.
 
 ## Luồng git
 

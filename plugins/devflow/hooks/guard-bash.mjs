@@ -33,6 +33,8 @@ const msg = checkCommand(cmd, {
   main: cfg.releaseBranch,
   current,
   guard: cfg.guard,
+  mode: cfg.mode,
+  pushBranches: cfg.github?.pushBranches,
 });
 if (msg) {
   console.error(`Blocked by devflow guard: ${msg}`);

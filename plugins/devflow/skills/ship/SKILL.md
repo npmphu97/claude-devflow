@@ -1,9 +1,12 @@
 ---
 name: ship
-description: Local git flow of a devflow repo — worktree per task, commit only the task's files, gate + fast-forward the task branch into dev, fast-forward dev into main with a version tag, auto-push dev/main/tags to the backup remote — all through scripts/devflow/flow.mjs. No PR, no CI. Use for every git step after the code is done (dev-loop phase 3 runs `npm run task` directly without this skill), or when the user says "ship", "commit", "land", "merge", "promote", "release", "lên main".
+description: Git flow of a devflow repo through scripts/devflow/flow.mjs — worktree per task, commit only the task's files. Local mode: gate + fast-forward the task branch into dev, fast-forward dev into main with a version tag, push dev/main/tags to the backup remote, no PR, no CI. GitHub mode ("mode": "github"): gate, push the task branch, open a pull request that CI checks with the same gate and a human merges; release tags the remote. Use for every git step after the code is done (dev-loop phase 3 runs `npm run task` directly without this skill), or when the user says "ship", "commit", "land", "merge", "promote", "release", "lên main".
 ---
 
 # ship
+
+> **Chế độ GitHub** (`"mode": "github"` trong `.devflow.json`): đọc mục "Chế độ GitHub" ở cuối trước — phần còn lại
+> mô tả chế độ local.
 
 Repo chạy **local**: clone này là nguồn sự thật, không PR, không CI. Remote (mặc định `origin`) chỉ là
 bản sao lưu: script tự push `dev`, `main` và tag sau `land` / `promote`. Nhánh task không bao giờ được
@@ -108,3 +111,34 @@ Version: tag do `promote` tạo là phiên bản thật. Bump theo Conventional 
 - `could not fast-forward dev in <path>`: worktree đang checkout `dev` có thay đổi chưa commit — báo người dùng, không tự dọn.
 - `main has commits that dev does not`: báo người dùng, không reset.
 - `backup push failed`: kiểm tra mạng / SSH key; `npm run backup`. Bị từ chối non-fast-forward → báo người dùng.
+
+## Chế độ GitHub
+
+`"mode": "github"`: GitHub là nguồn sự thật. Nhánh tích hợp thường trùng nhánh release (`main`, GitHub flow); có thể
+dùng `dev` → `main` (khi đó `promote` mở PR `dev` → `main`).
+
+```
+feat/… fix/… claude/…  ──pr (gate + push + PR)──►  PR  ──CI (cùng gate) + review + merge trên GitHub──►  main
+                                                                                     └── release: tag vX.Y.Z (push tag)
+```
+
+| Lệnh | Làm gì |
+|---|---|
+| `npm run task -- feat/<scope>-<mô-tả>` | Worktree mới, nhánh tạo từ `origin/<tích hợp>` (fetch trước). |
+| `npm run check [-- --base <ref>]` | Gate so với `origin/<tích hợp>` (hoặc `<ref>`). CI chạy `check --ci --base origin/<base>`. |
+| `npm run pr` (`land` = `pr`) | Nhánh task, cây sạch: gate → `git push -u origin <nhánh>` (không bao giờ force) → mở PR bằng `gh` nếu đã đăng nhập; không thì in `DEVFLOW_OPEN_PR repo=… base=… head=…` + link compare để agent mở PR bằng công cụ GitHub của phiên. PR đã mở → chỉ push, CI chạy lại. |
+| `npm run sync` | `fetch --prune`, fast-forward `main` local theo remote, xoá nhánh local đã nằm trong `origin/<tích hợp>`, liệt kê nhánh mà remote đã xoá (squash merge) để người xoá. |
+| `npm run release` | Chỉ khi người dùng bảo: tính version từ Conventional Commits trên `origin/<release>`, tạo annotated tag, push tag (workflow theo tag, ví dụ deploy production, chạy từ đây). |
+| `npm run cloud-push` | Phiên cloud (`claude/*`, `ccr-*`): push nhánh phiên để giữ việc; mở PR bằng `npm run pr`. |
+
+Hook chặn: push nhánh bảo vệ (`main`/`dev`), force / `--force-with-lease`, xoá nhánh remote, push tag tay, `--mirror` /
+`--all`, push nhánh không khớp `github.pushBranches`; `gh pr merge|close`, `gh release create…`, `gh repo delete|edit`;
+merge / reset / dời nhánh bảo vệ ở local. Được: push nhánh task, `gh pr create|view|checks`, `gh run view`,
+`git merge origin/main` vào nhánh task (cập nhật nhánh đã push mà không cần force).
+
+Nhánh task đã push mà base đi trước, có conflict: `git merge origin/<tích hợp>` trên nhánh task, sửa conflict, `ship`,
+`npm run pr`. Không rebase nhánh đã push (sẽ phải force).
+
+CI: `.github/workflows/devflow-gate.yml` (do `/devflow:init --github` tạo) chạy đúng gate trên mỗi PR. Đặt check
+"devflow gate" thành required trong branch protection để không merge được khi đỏ. Bước cài đặt phụ thuộc mà lệnh
+của vùng cần (composer, docker…) thêm vào workflow đó.

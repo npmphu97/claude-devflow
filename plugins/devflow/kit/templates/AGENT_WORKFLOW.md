@@ -7,6 +7,10 @@ mỗi pha có đầu ra rõ ràng và cổng kiểm soát trước khi sang pha 
 > **Repo chạy local:** không PR, không CI; remote chỉ giữ bản sao lưu `dev`/`main`/tag do script tự
 > push. Nhánh task (không push) vào `dev` bằng fast-forward qua `npm run land` (gate local thay CI),
 > `dev` vào `main` bằng fast-forward qua `npm run promote` (tạo tag `vX.Y.Z`).
+>
+> **Chế độ GitHub** (`"mode": "github"`): nhánh task được push và vào nhánh tích hợp bằng pull request — `npm run pr`
+> (gate local + push + mở PR) → CI chạy cùng gate → người review và merge → `npm run sync`. Phát hành: `npm run release`
+> (tag trên remote). Ở bảng dưới, "land" đọc là "pr + merge trên GitHub".
 
 ## Thành phần
 
@@ -75,7 +79,7 @@ Việc đụng dữ liệu production, schema, phân quyền, tiền: **luôn �
 | Chạy trọn change OpenSpec đã duyệt | `/devflow:opsx-run <name>` (apply trong subagent, check → verifier → review → commit → land theo chế độ đã chọn → untask + archive; sau khi duyệt artifact có thể `/clear` rồi chạy) |
 | Tính năng mới cần làm rõ yêu cầu | `/opsx:explore` rồi `/opsx:propose` |
 | Fix nhỏ làm thẳng trên `dev` | `/devflow:hot-fix-dev` |
-| Phiên cloud (nhánh `ccr-*`) xong việc | `npm run cloud-push` (chỉ backup, không land) |
+| Phiên cloud (nhánh `ccr-*`, `claude/*`) xong việc | Local: `npm run cloud-push` (chỉ backup, không land). GitHub: `npm run pr` |
 | Kiểm trước khi land | `npm run check`, subagent `devflow:verifier`, skill `verify-app` của dự án |
 | Dự án chưa có / cần cập nhật cách kiểm app thật | `/devflow:verify-setup` |
 | Đưa nhánh vào `dev` / `dev` lên `main` | "land" (hoặc tự động nếu plan chọn `auto-land`) / "promote" |

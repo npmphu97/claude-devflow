@@ -63,10 +63,16 @@ if (queue.exists) {
   console.log(`${ready.length} ready${ready[0] ? `; next: ${describe(ready[0], { hideBlockedBy: true })}` : ''}`);
 }
 
+// github mode: GitHub is the source of truth — refresh <remote>/<dev> so check / hard-rules / status diff
+// against what is really merged. Offline or no remote → skipped quietly.
+if (cfg.mode === 'github' && cfg.remote && cfg.github?.fetchOnStart !== false) {
+  spawnSync('git', ['fetch', '-q', cfg.remote, cfg.integrationBranch], { cwd: root, stdio: 'ignore', timeout: 20000 });
+}
+
 if (process.env.CLAUDE_CODE_REMOTE === 'true') {
   // Cloud clones have no local integration branch, so check / hard-rules could not diff against it.
   const dev = cfg.integrationBranch;
-  if (cfg.remote && branch !== dev && spawnSync('git', ['ls-remote', '--exit-code', '--heads', cfg.remote, dev], { cwd: root }).status === 0) {
+  if (cfg.mode !== 'github' && cfg.remote && branch !== dev && spawnSync('git', ['ls-remote', '--exit-code', '--heads', cfg.remote, dev], { cwd: root }).status === 0) {
     const f = spawnSync('git', ['fetch', '-q', cfg.remote, `${dev}:${dev}`], { cwd: root, stdio: ['ignore', process.stderr, process.stderr] });
     if (f.status !== 0) console.error(`could not create local ${dev} from ${cfg.remote}/${dev}; cloud-push falls back to ${cfg.remote}/${dev}`);
   }

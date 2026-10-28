@@ -61,6 +61,27 @@ describe('guard rules', () => {
   });
 });
 
+describe('guard rules: github mode', () => {
+  const gh = (cmd, current = 'feat/x') => checkCommand(cmd, { ...ctx(current), dev: 'main', main: 'main', mode: 'github' });
+  it('allows pushing task branches and opening PRs', () => {
+    assert.equal(gh('git push -u origin feat/x'), null);
+    assert.equal(gh('git push'), null);
+    assert.equal(gh('git push -u origin claude/abc', 'claude/abc'), null);
+    assert.equal(gh('gh pr create --fill'), null);
+    assert.equal(gh('gh pr view 3 --json state'), null);
+    assert.equal(gh('gh run view 12'), null);
+    assert.equal(gh('git merge origin/main', 'feat/x'), null); // update a pushed branch without force
+  });
+  it('blocks protected branches, force, tags, deletes, PR merges', () => {
+    for (const [cmd, cur] of [['git push', 'main'], ['git push origin main'], ['git push origin HEAD:main'], ['git push -f origin feat/x'],
+      ['git push --force-with-lease'], ['git push origin --tags'], ['git push origin v1.2.0'], ['git push origin :feat/x'],
+      ['git push origin +feat/x'], ['git push origin --delete feat/x'], ['git push origin random-branch'],
+      ['gh pr merge 3 --squash'], ['gh release create v1.0.0'], ['git merge feat/x', 'main'], ['git branch -f main HEAD']]) {
+      assert.notEqual(gh(cmd, cur), null, cmd);
+    }
+  });
+});
+
 // ---------- e2e on throwaway repos ----------
 
 const roots = [];
@@ -353,7 +374,112 @@ else console.log(JSON.stringify(a.filter(x=>!x.startsWith('-')&&x!=='json').map(
   });
 });
 
+describe('flow: github mode', () => {
+  const GH_JSON = { mode: 'github', integrationBranch: 'main', releaseBranch: 'main', remote: 'origin', commitlint: false,
+    areas: [{ name: 't', paths: [''], commands: [{ label: 't', run: 'node -e "process.exit(0)"' }] }] };
+  const env = { ...process.env, DEVFLOW_NO_GH: '1' };
+  const setup = () => {
+    const repo = mkRepo({ '.devflow.json': JSON.stringify(GH_JSON), 'a.txt': 'a\n' });
+    repo.git(['branch', '-D', 'dev']);
+    const bare = mkdtempSync(join(tmpdir(), 'devflow-bare-'));
+    roots.push(bare);
+    spawnSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
+    repo.git(['remote', 'add', 'origin', bare]);
+    repo.git(['push', '-q', 'origin', 'main']);
+    repo.git(['fetch', '-q', 'origin']);
+    const remoteSha = ref => spawnSync('git', ['rev-parse', ref], { cwd: bare, encoding: 'utf8' }).stdout.trim();
+    /** Merge a branch into main on the "GitHub" side, like a merged PR (merge commit). */
+    const mergePr = branch => {
+      const other = mkdtempSync(join(tmpdir(), 'devflow-gh-'));
+      roots.push(other);
+      const g = a => spawnSync('git', a, { cwd: other, encoding: 'utf8' });
+      g(['clone', '-q', bare, '.']);
+      g(['config', 'user.email', 'g@g.g']);
+      g(['config', 'user.name', 'G']);
+      assert.equal(g(['merge', '--no-ff', '-q', '-m', `Merge pull request #1 from ${branch}`, `origin/${branch}`]).status, 0);
+      assert.equal(g(['push', '-q', 'origin', 'main']).status, 0);
+    };
+    return { repo, bare, remoteSha, mergePr };
+  };
+
+  it('task → ship → pr: gate, push the task branch, print what opens the PR; main untouched', () => {
+    const { repo, remoteSha } = setup();
+    let r = repo.run(FLOW, ['task', '--', 'feat/gh'], { env });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const wt = join(repo.root, '.claude', 'worktrees', 'feat-gh');
+    writeFileSync(join(wt, 'a.txt'), 'a\nb\n');
+    assert.equal(repo.run(FLOW, ['ship', '-m', 'feat(t): via pr', 'a.txt'], { cwd: wt, env }).status, 0);
+    const mainBefore = remoteSha('main');
+    r = repo.run(FLOW, ['land'], { cwd: wt, env }); // land = pr in github mode
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /DEVFLOW_OPEN_PR .*base=main head=feat\/gh/);
+    assert.equal(remoteSha('feat/gh'), spawnSync('git', ['rev-parse', 'HEAD'], { cwd: wt, encoding: 'utf8' }).stdout.trim());
+    assert.equal(remoteSha('main'), mainBefore);
+  });
+
+  it('check --ci --base works in a clone without the local integration branch', () => {
+    const { repo } = setup();
+    repo.git(['switch', '-q', '-c', 'feat/ci']);
+    writeFileSync(join(repo.root, 'a.txt'), 'a\nci\n');
+    repo.git(['commit', '-qam', 'fix(t): ci']);
+    repo.git(['branch', '-D', 'main']);
+    const r = repo.run(FLOW, ['check', '--ci', '--base', 'origin/main'], { env });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /check passed vs origin\/main/);
+  });
+
+  it('sync fast-forwards local main after the PR merge and deletes the merged branch; release tags the remote', () => {
+    const { repo, remoteSha, mergePr } = setup();
+    repo.git(['switch', '-q', '-c', 'feat/merged']);
+    writeFileSync(join(repo.root, 'a.txt'), 'a\nmerged\n');
+    repo.git(['commit', '-qam', 'feat(t): merged feature']);
+    repo.git(['push', '-q', '-u', 'origin', 'feat/merged']);
+    repo.git(['switch', '-q', 'main']);
+    mergePr('feat/merged');
+    let r = repo.run(FLOW, ['sync'], { env });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(repo.git(['rev-parse', 'main']), remoteSha('main'));
+    assert.equal(spawnSync('git', ['rev-parse', '--verify', '-q', 'refs/heads/feat/merged'], { cwd: repo.root }).status, 1);
+    r = repo.run(FLOW, ['release'], { env });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(spawnSync('git', ['tag', '--list'], { cwd: repo.root, encoding: 'utf8' }).stdout.trim(), 'v1.0.0');
+    assert.ok(remoteSha('refs/tags/v1.0.0'));
+    r = repo.run(FLOW, ['release'], { env });
+    assert.match(r.stdout, /nothing to release/);
+  });
+
+  it('pr refuses protected branches, backup is a no-op, cloud-push accepts claude/* branches', () => {
+    const { repo, remoteSha } = setup();
+    let r = repo.run(FLOW, ['pr'], { env });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /on main/);
+    assert.match(repo.run(FLOW, ['backup'], { env }).stdout, /nothing to back up/);
+    repo.git(['switch', '-q', '-c', 'claude/session-x']);
+    writeFileSync(join(repo.root, 'a.txt'), 'a\ncloud\n');
+    repo.git(['commit', '-qam', 'fix(t): cloud']);
+    r = repo.run(FLOW, ['cloud-push'], { env });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(remoteSha('claude/session-x'), repo.git(['rev-parse', 'HEAD']));
+  });
+
+  it('doctor accepts the remote-tracking integration branch and warns about the missing workflow', () => {
+    const { repo } = setup();
+    const r = repo.run(FLOW, ['doctor'], { env });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /devflow-gate\.yml/);
+  });
+});
+
 describe('hard-rules', () => {
+  it('ignores the vendored devflow scripts (their self-tests contain it.skip fixtures)', () => {
+    const repo = mkRepo({ '.devflow.json': JSON.stringify(DEV_FLOW_JSON) });
+    repo.git(['checkout', '-qb', 'chore/x']);
+    mkdirSync(join(repo.root, 'scripts', 'devflow'), { recursive: true });
+    writeFileSync(join(repo.root, 'scripts', 'devflow', 'devflow.test.mjs'), 'it.skip("fixture", () => {});\n');
+    const r = repo.run(HARD_RULES, ['--strict']);
+    assert.equal(r.status, 0, r.stdout);
+  });
+
   it('ERROR on disabled tests, --strict exits 1', () => {
     const repo = mkRepo({ '.devflow.json': JSON.stringify({ ...DEV_FLOW_JSON, commitlint: false }) });
     repo.git(['checkout', '-qb', 'feat/x']);

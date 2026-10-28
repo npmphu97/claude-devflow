@@ -60,6 +60,10 @@ for (const f of git(['-c', 'core.quotepath=off', 'ls-files', '--others', '--excl
   } catch { /* unreadable / binary */ }
 }
 
+// The vendored devflow scripts are the plugin's own code (identical in every repo, tested by devflow-test);
+// their self-tests contain fixtures such as `it.skip(` on purpose. Not the project's lines → not checked.
+for (const f of [...files.keys()]) if (f.startsWith('scripts/devflow/')) files.delete(f);
+
 // ---- helpers ----
 const findings = [];
 const add = (level, file, n, msg) => findings.push({ level, file, n, msg });
