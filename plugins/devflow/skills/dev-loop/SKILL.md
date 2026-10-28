@@ -110,8 +110,13 @@ không tự sửa được, chạm circuit breaker, hoặc cần quyết định
    commit rồi mới review lại.
 4. **Không báo lại bug cũ.** Finding đã sửa, hoặc đã bỏ qua có lý do, không báo lại ở vòng sau.
 
-## 6. Commit và land (local, không PR; nhánh task không push)
+## 6. Commit và land (local: không PR, nhánh task không push · github: pull request)
 - Commit bằng `npm run ship` (skill `devflow:ship`). Quyết định còn giá trị ghi vào body commit.
+- **Chế độ GitHub** (`"mode": "github"` trong `.devflow.json`): thay cho land là `npm run pr` — gate local, push nhánh
+  task, mở PR (không có `gh` → mở bằng công cụ GitHub của phiên theo dòng `DEVFLOW_OPEN_PR`). Được chạy ngay khi gate
+  xanh và verifier PASS, không cần chờ người bảo (người vẫn là bên merge). Mô tả PR = báo cáo pha 7. Sau đó theo dõi
+  CI của PR; đỏ → `devflow:steward`, sửa, `ship`, `npm run pr` lại. Không bao giờ merge PR. Sau khi người merge:
+  `npm run sync`, `queue done`, `untask`. Các gạch đầu dòng dưới đây về land / promote là của chế độ local.
 - Xoá file handoff và file plan (`.claude/plans/<nhánh>.md`) của nhánh trong một commit trước khi land.
 - `npm run land` khi người dùng yêu cầu, hoặc khi plan đã duyệt chọn `auto-land` và đủ điều kiện (pha 2
   mục 7); gate đỏ → skill `devflow:steward`. `npm run promote` chỉ khi người dùng yêu cầu riêng.
@@ -124,7 +129,7 @@ Dừng giữa chừng (hết phiên, chờ người dùng, context sắp đầy)
 task trong queue thì thêm `npm run queue -- block <id> --reason "..."`.
 
 ## 7. Báo cáo
-Thay cho mô tả PR, gửi trong chat: cỡ đã chọn; đã làm gì; **bằng chứng kiểm thử** (lệnh + dòng kết quả thật,
+Chế độ local: thay cho mô tả PR, gửi trong chat. Chế độ GitHub: đây là mô tả PR (và tóm tắt trong chat): cỡ đã chọn; đã làm gì; **bằng chứng kiểm thử** (lệnh + dòng kết quả thật,
 kết luận verifier, bằng chứng `verify-app`); "Thay đổi DB" nếu có; rủi ro còn lại; việc người cần làm (đọc
 `git diff dev...<nhánh>`, bảo land, chạy migration production, UAT).
 

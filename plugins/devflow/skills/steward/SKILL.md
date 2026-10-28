@@ -5,8 +5,9 @@ description: Conventions for taking a finished task branch of a devflow repo thr
 
 # steward
 
-Quy ước khi agent đưa một nhánh task vào `dev` (và `dev` vào `main`). Repo chạy local: không PR,
-không CI — gate của `npm run land` (skill `devflow:ship`) là cổng kiểm duy nhất bằng máy.
+Quy ước khi agent đưa một nhánh task vào `dev` (và `dev` vào `main`). Chế độ local: không PR,
+không CI — gate của `npm run land` (skill `devflow:ship`) là cổng kiểm duy nhất bằng máy. Chế độ GitHub
+(`"mode": "github"`): xem mục cuối — cùng gate, chạy ở local (`npm run pr`) và trong CI của PR.
 
 ## Gate đỏ
 - Đọc output của bước đỏ, tái hiện bằng `npm run check` (cùng gate, không merge), sửa root cause,
@@ -41,3 +42,16 @@ Không có PR: người dùng đọc diff (`git diff dev...<nhánh>`) và báo c
 ## Xong khi
 Gate xanh, verifier PASS, báo cáo đã gửi người dùng — chờ người dùng bảo land (hoặc, nếu đã được yêu
 cầu hoặc plan chọn `auto-land` và đủ điều kiện, chạy `npm run land`, rồi `untask`).
+
+## Chế độ GitHub
+- **CI đỏ trên PR:** đọc log job "devflow gate" (artifact `devflow-logs` khi đỏ), tái hiện bằng `npm run check`, sửa
+  root cause, `ship`, `npm run pr` (push thêm commit, CI chạy lại). Đỏ ở bước chỉ có trên CI (cài phụ thuộc, dịch vụ)
+  → sửa workflow trong cùng nhánh nếu thuộc task, không thì báo người dùng.
+- **Review trên PR:** nit, đổi tên, thêm test, refactor nhỏ → sửa, commit mới, `npm run pr`, trả lời từng thread. Thay
+  đổi thiết kế / schema / API → trả lời bằng đề xuất, chờ người quyết.
+- **Base đi trước, conflict:** `git merge origin/<tích hợp>` trên nhánh task, sửa, `ship`, `npm run pr`. Không rebase
+  nhánh đã push, không force.
+- **Không bao giờ:** merge / đóng PR, push nhánh bảo vệ, force-push, push tag tay, `release` khi người dùng chưa bảo,
+  tắt check bắt buộc hay sửa workflow để CI xanh.
+- **Xong khi:** gate local xanh, verifier PASS, PR đã mở với mô tả (báo cáo pha 7), CI xanh — chờ người review và merge,
+  rồi `npm run sync` + `untask`.

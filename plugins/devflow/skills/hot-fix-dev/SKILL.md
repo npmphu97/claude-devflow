@@ -3,6 +3,9 @@ name: hot-fix-dev
 description: Shortcut for a small fix done directly on the dev checkout of the main repo (no worktree, not the full dev-loop) — still goes through `ship --verify --land`, so the land gate runs. Use when the user says "hot-fix", "hotfix", "fix nhanh trên dev", "sửa thẳng dev" and the task meets the conditions in the skill.
 ---
 
+
+> Chế độ GitHub (`"mode": "github"`): không dùng skill này — nhánh tích hợp chỉ đi bằng PR. Fix nhỏ cũng đi
+> `npm run task` → sửa → `ship` → `npm run pr` (cỡ S của `dev-loop`).
 # hot-fix-dev
 
 Fix nhỏ, rõ nguyên nhân, làm ngay trong checkout `dev` của repo chính. `dev` **không bao giờ** bị

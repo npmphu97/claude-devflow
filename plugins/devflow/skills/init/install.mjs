@@ -3,7 +3,9 @@
 // detected stack, add npm scripts, CLAUDE.md section, docs, .gitignore and commitlint config.
 // Never overwrites a file that exists (except vendored scripts with --update / --force).
 // Usage: node install.mjs [--target <repo>] [--dry-run] [--update] [--force] [--no-package-json]
-//                         [--create-package-json] [--create-dev]
+//                         [--create-package-json] [--create-dev] [--github]
+// --github: GitHub mode — task branches are pushed and merged by pull request after CI runs the same gate
+// (.github/workflows/devflow-gate.yml); integration branch = release branch unless --create-dev.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, copyFileSync, appendFileSync, chmodSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -13,6 +15,7 @@ const KIT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'kit');
 const args = process.argv.slice(2);
 const flag = f => args.includes(`--${f}`);
 const dryRun = flag('dry-run');
+const github = flag('github');
 const target = args.includes('--target') ? args[args.indexOf('--target') + 1] : process.cwd();
 
 const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: target, encoding: 'utf8' });
@@ -72,6 +75,7 @@ if (flag('update')) {
   const conf = readJson(join(root, '.devflow.json')) ?? {};
   if (conf.stopGate === undefined) console.log('  ! .devflow.json has no "stopGate" — set it to true to make the agent pass `check` before ending a turn on a task branch.');
   if (!(conf.areas ?? []).some(a => a.format)) console.log('  ! no areas[].format in .devflow.json — add the project formatter so edited files are formatted by the PostToolUse hook.');
+  if (conf.mode === 'github' && !existsSync(join(root, '.github', 'workflows', 'devflow-gate.yml'))) console.log('  ! github mode without .github/workflows/devflow-gate.yml — copy kit/templates/github/devflow-gate.yml (replace __INTEGRATION__) so CI runs the gate.');
   if (!existsSync(join(root, '.claude', 'skills', 'verify-app', 'SKILL.md'))) console.log('  ! no .claude/skills/verify-app — run /devflow:verify-setup if the project has an app to run.');
   process.exit(0);
 }
@@ -137,9 +141,15 @@ const branchExists = b => spawnSync('git', ['rev-parse', '--verify', '--quiet', 
 const release = branchExists('main') ? 'main' : branchExists('master') ? 'master' : 'main';
 const remote = spawnSync('git', ['remote'], { cwd: root, encoding: 'utf8' }).stdout.split('\n').filter(Boolean)[0] ?? null;
 
+if (github && !remote) {
+  console.error('✖ --github needs a git remote pointing at the GitHub repository (git remote add origin <url>).');
+  process.exit(1);
+}
+const integration = github && !flag('create-dev') ? release : 'dev';
 const config = {
-  $comment: 'devflow config — see the devflow plugin README. Review areas/commands: they are the land gate.',
-  integrationBranch: 'dev',
+  $comment: 'devflow config — see the devflow plugin README. Review areas/commands: they are the land gate (and the CI gate in github mode).',
+  ...(github ? { mode: 'github' } : {}),
+  integrationBranch: integration,
   releaseBranch: release,
   remote,
   linkDirs,
@@ -162,6 +172,7 @@ const SCRIPTS = {
   sync: 'node scripts/devflow/flow.mjs sync',
   backup: 'node scripts/devflow/flow.mjs backup',
   'cloud-push': 'node scripts/devflow/flow.mjs cloud-push',
+  ...(github ? { pr: 'node scripts/devflow/flow.mjs pr', release: 'node scripts/devflow/flow.mjs release' } : {}),
   'hard-rules': 'node scripts/devflow/hard-rules.mjs',
   retro: 'node scripts/devflow/retro.mjs',
   handoff: 'node scripts/devflow/handoff.mjs',
@@ -193,7 +204,7 @@ if (!flag('no-package-json') && (existsSync(pkgFile) || flag('create-package-jso
 
 // ---------- 4. docs, CLAUDE.md, handoff dir, gitignore, commitlint ----------
 const claudeMd = join(root, 'CLAUDE.md');
-const section = tpl('CLAUDE.devflow.md');
+const section = tpl(github ? 'CLAUDE.devflow.github.md' : 'CLAUDE.devflow.md');
 if (existsSync(claudeMd)) {
   if (readFileSync(claudeMd, 'utf8').includes('<!-- devflow:start')) did('kept', 'CLAUDE.md (devflow section already there)');
   else {
@@ -203,6 +214,7 @@ if (existsSync(claudeMd)) {
 } else write('CLAUDE.md', `# CLAUDE.md — <tên dự án>\n\n<Tổng quan, kiến trúc, lệnh build/test: chạy /init của Claude Code để sinh phần này.>\n\n${section}`);
 
 write('docs/AGENT_WORKFLOW.md', tpl('AGENT_WORKFLOW.md'));
+if (github) write('.github/workflows/devflow-gate.yml', tpl('github/devflow-gate.yml').replaceAll('__INTEGRATION__', integration));
 write('.claude/handoff/README.md', tpl('handoff-README.md'));
 write('.claude/task-queue.md', tpl('task-queue.md'));
 
@@ -229,7 +241,9 @@ else {
 
 // Pre-allow the safe, local devflow commands so the loop does not stop on permission prompts.
 // land / promote stay out: they move dev / main and need the user's explicit request.
-const ALLOW = ['task', 'untask', 'ship', 'check', 'status', 'queue', 'handoff', 'hard-rules', 'retro', 'doctor', 'devflow-test', 'worktrees:clean']
+// github mode: pr (push a task branch + open its PR) and sync are safe — a human still merges; release is not.
+const ALLOW = ['task', 'untask', 'ship', 'check', 'status', 'queue', 'handoff', 'hard-rules', 'retro', 'doctor', 'devflow-test', 'worktrees:clean',
+  ...(github ? ['pr', 'sync'] : [])]
   .map(c => `Bash(npm run ${c}:*)`)
   .concat(['Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)']);
 const settingsFile = join(root, '.claude', 'settings.json');
@@ -255,7 +269,7 @@ if (existsSync(join(root, '.husky')) || flag('create-package-json') || existsSyn
 }
 
 // ---------- 5. integration branch ----------
-if (!branchExists('dev')) {
+if (integration === 'dev' && !branchExists('dev')) {
   if (flag('create-dev')) {
     if (!dryRun) spawnSync('git', ['branch', 'dev', release], { cwd: root, stdio: 'inherit' });
     did('created', `branch dev from ${release}`);
