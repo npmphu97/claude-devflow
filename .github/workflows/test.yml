@@ -1,0 +1,28 @@
+name: devflow tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: git identity for the throwaway test repos
+        run: git config --global user.email ci@example.com && git config --global user.name CI
+      - name: devflow self-tests (guard rules, flow, hooks)
+        env:
+          CLAUDE_PLUGIN_ROOT: ${{ github.workspace }}/plugins/devflow
+          DEVFLOW_NO_GH: '1'
+        run: node --test plugins/devflow/kit/scripts/devflow/devflow.test.mjs

@@ -10,15 +10,19 @@
 //   untask   remove a task worktree safely
 //   archive  archive a landed OpenSpec change (worktree → openspec archive → commit → land → untask)
 //   status   who works on what: task worktrees (ahead/behind, dirty, handoff) + queue, read-only
-// The local clone is the source of truth: no PR, no CI. Integration/release branches only move by
-// fast-forward and are pushed to the remote as a backup; task branches are never pushed.
+//   pr       github mode: gate, push the task branch, open (or show) its pull request
+//   release  github mode: tag the release branch on the remote with the next version, push the tag
+// mode "local" (default): the local clone is the source of truth: no PR, no CI. Integration/release
+// branches only move by fast-forward and are pushed to the remote as a backup; task branches are never pushed.
+// mode "github": GitHub is the source of truth. Task branches are pushed and merged by pull request after
+// CI (the same gate: `check --ci` in .github/workflows/devflow-gate.yml) and review; `land` = `pr`.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdtempSync, symlinkSync, lstatSync, unlinkSync, statSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { repoRoot, mainCheckout, loadConfig, commandHint } from './config.mjs';
+import { repoRoot, mainCheckout, loadConfig, commandHint, baseRef, githubSlug } from './config.mjs';
 import { gateKey, gatePassed, markPassed } from './gate-cache.mjs';
 import { queueFile, load as loadQueue, itemsOf, readyItems, describe as describeTask } from './queue-lib.mjs';
 
@@ -28,6 +32,10 @@ const DEV = cfg.integrationBranch;
 const MAIN = cfg.releaseBranch;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const isWin = process.platform === 'win32';
+const GITHUB = cfg.mode === 'github';
+/** The ref the gate diffs against: the integration branch (local, or <remote>/<dev> in github mode / clones
+ * without it), or `check --base <ref>` (CI: the PR's base). Set by resolveBase(). */
+let BASE = DEV;
 const hint = name => commandHint(REPO_ROOT, name);
 
 let dryRun = false;
@@ -81,6 +89,20 @@ function requireBranch(b) {
   if (!branchExists(b)) die(`no local ${b} branch (create it once: git branch ${b} ${b === DEV ? MAIN : 'HEAD'}).`);
 }
 
+/** Resolve BASE for the gate; dies when there is nothing to diff against. github mode fetches the
+ * integration branch first (offline: the last fetched state is used). */
+function resolveBase(override) {
+  if (GITHUB && cfg.remote && !override && !dryRun) {
+    spawnSync('git', ['fetch', '-q', cfg.remote, DEV], { cwd: REPO_ROOT, stdio: 'ignore', timeout: 60000 });
+  }
+  const b = baseRef(REPO_ROOT, cfg, override);
+  if (!b) die(override ? `--base ${override}: no such ref (fetch it first).`
+    : GITHUB && DEV === MAIN ? `no ${DEV} branch, local or on ${cfg.remote} — create it on GitHub (default branch), then fetch; ask the user.`
+    : `no ${DEV} branch, local or ${cfg.remote ?? 'remote'}/${DEV} (create it once: git branch ${DEV} ${MAIN}${GITHUB ? `, or push ${DEV} to GitHub` : ''}).`);
+  BASE = b;
+  return b;
+}
+
 /** true when commit `a` is contained in `b` (b can fast-forward over a). */
 function isAncestor(a, b) {
   return git(['merge-base', '--is-ancestor', a, b], { allowFail: true }) !== null;
@@ -94,6 +116,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '-m') opts.messages.push(argv[++i]);
     else if (a === '-F') opts.messageFile = argv[++i]; // multi-line message (npm on Windows cuts newlines in args)
+    else if (a === '--base') opts.base = argv[++i];
     else if (a === '--') opts.paths.push(...argv.slice(i + 1)), (i = argv.length);
     else if (a.startsWith('--')) opts.flags.add(a.slice(2));
     else opts.paths.push(a);
@@ -152,13 +175,13 @@ function task(opts) {
   if (!branch || !/^[a-z]+\/[a-z0-9][a-z0-9._-]*$/.test(branch)) {
     die(`usage: ${hint('task')} -- <type>/<scope>-<desc>   e.g. feat/billing-export-csv`);
   }
-  requireBranch(DEV);
+  const from = GITHUB ? resolveBase() : (requireBranch(DEV), DEV);
   const mainRoot = mainCheckout(REPO_ROOT);
   const path = join(mainRoot, ...cfg.worktreeDir.split('/'), branch.replace(/\//g, '-'));
   if (existsSync(path)) die(`${path} already exists — enter it instead.`);
   if (branchExists(branch)) die(`branch ${branch} already exists — use: git worktree add "${path}" ${branch}`);
-  step(`worktree ${path} on new branch ${branch} from ${DEV}`);
-  exec('git', ['worktree', 'add', '-b', branch, path, DEV]);
+  step(`worktree ${path} on new branch ${branch} from ${from}`);
+  exec('git', ['worktree', 'add', ...(GITHUB ? ['--no-track'] : []), '-b', branch, path, from]);
   for (const dir of cfg.linkDirs) {
     const target = join(mainRoot, dir);
     if (!existsSync(target)) continue;
@@ -170,7 +193,8 @@ function task(opts) {
 
 /** Delete a local branch only when the integration branch already contains it. */
 function deleteIfMerged(branch) {
-  if (!isAncestor(branch, DEV)) return console.log(`  ! kept branch ${branch} (not in ${DEV} yet)`);
+  const into = GITHUB ? (baseRef(REPO_ROOT, cfg) ?? DEV) : DEV;
+  if (!isAncestor(branch, into)) return console.log(`  ! kept branch ${branch} (not in ${into} yet)`);
   exec('git', ['branch', '-D', branch]); // safe: checked above that DEV contains every commit of it
 }
 
@@ -302,7 +326,7 @@ async function mapLimit(items, limit, fn) {
 /** Files renamed vs the integration branch (committed or not): new path → old path. */
 function renamedFromDev() {
   const renamed = new Map();
-  for (const line of git(['-c', 'core.quotepath=off', 'diff', '-M', '--name-status', DEV]).split('\n')) {
+  for (const line of git(['-c', 'core.quotepath=off', 'diff', '-M', '--name-status', BASE]).split('\n')) {
     const [status, from, to] = line.split('\t');
     if (status?.startsWith('R')) renamed.set(to, from);
   }
@@ -321,12 +345,12 @@ async function verifyArea(area, areaFiles) {
     const renamed = renamedFromDev();
     const lintable = areaFiles.filter(f => f.startsWith(prefix) && extensions.some(e => f.endsWith(e)) && existsSync(join(REPO_ROOT, f)));
     const counts = lintable.length ? await eslintCurrent(cwd, lintable) : new Map();
-    const befores = await eslintBases(cwd, lintable.filter(f => counts.get(f).warnings > 0), DEV, renamed);
+    const befores = await eslintBases(cwd, lintable.filter(f => counts.get(f).warnings > 0), BASE, renamed);
     for (const f of lintable) {
       const now = counts.get(f);
       const from = renamed.has(f) ? ` at ${renamed.get(f)}` : '';
       const base = befores.has(f) ? befores.get(f).warnings : 0; // no warnings now → cannot have increased
-      out += `  ${f}: ${now.errors} error(s), ${now.warnings} warning(s) (${DEV}${from}: ${befores.has(f) ? base : 'not read'})\n`;
+      out += `  ${f}: ${now.errors} error(s), ${now.warnings} warning(s) (${BASE}${from}: ${befores.has(f) ? base : 'not read'})\n`;
       if (now.errors > 0) return fail(`verify: ESLint errors in ${f}. Nothing was committed/merged.`);
       if (now.warnings > base) return fail(`verify: ESLint warnings increased in ${f}. Nothing was committed/merged.`);
     }
@@ -429,7 +453,7 @@ async function ship(opts) {
 
   let branch = currentBranch();
   if (!branch) die('detached HEAD — checkout a branch first.');
-  if (branch === MAIN) die(`on ${MAIN}: it only moves by \`${hint('promote')}\`. Work on a task branch.`);
+  if (branch === MAIN && DEV !== MAIN) die(`on ${MAIN}: it only moves by \`${hint('promote')}\`. Work on a task branch.`);
 
   if (opts.flags.has('verify')) await verify(opts.paths.flatMap(p => changedFiles(toRepoPath(p))));
 
@@ -498,11 +522,11 @@ function shipIsolated(opts, header) {
 /** commitlint on DEV..HEAD, hard rules (ERROR blocks), then per-area checks of every file changed vs
  * DEV — committed or not (land runs on a clean tree anyway). */
 async function gate() {
-  if (git(['rev-list', '--count', `${DEV}..HEAD`]) !== '0' && cfg.commitlint !== false) {
+  if (git(['rev-list', '--count', `${BASE}..HEAD`]) !== '0' && cfg.commitlint !== false) {
     const cli = join(REPO_ROOT, 'node_modules', '@commitlint', 'cli', 'cli.js');
     if (existsSync(cli)) {
-      step(`gate: commitlint on ${DEV}..HEAD`);
-      runLocal(`commitlint --from ${DEV} --to HEAD`, process.execPath, [cli, '--from', DEV, '--to', 'HEAD'], REPO_ROOT);
+      step(`gate: commitlint on ${BASE}..HEAD`);
+      runLocal(`commitlint --from ${BASE} --to HEAD`, process.execPath, [cli, '--from', BASE, '--to', 'HEAD'], REPO_ROOT);
     } else if (cfg.commitlint === true) {
       die('commitlint is required by .devflow.json but node_modules/@commitlint/cli is missing (npm install).');
     } else {
@@ -513,31 +537,38 @@ async function gate() {
   // same merge base → same result. So `check` on uncommitted work, then the verifier's `check`, then
   // `land` after committing that content run them once. commitlint (above) reads the commits: always runs.
   // The plugin's Stop hook reads the same key (gate-cache.mjs).
-  const key = gateKey(REPO_ROOT, DEV);
-  if (!opts.flags.has('no-cache') && gatePassed(REPO_ROOT, key)) {
-    return console.log(`\n▶ gate: hard rules + areas already passed for this content vs ${DEV} — skipped. --no-cache to rerun.`);
+  const key = gateKey(REPO_ROOT, BASE);
+  const noCache = opts.flags.has('no-cache') || opts.flags.has('ci');
+  if (!noCache && gatePassed(REPO_ROOT, key)) {
+    return console.log(`\n▶ gate: hard rules + areas already passed for this content vs ${BASE} — skipped. --no-cache to rerun.`);
   }
   step('gate: hard rules (ERROR blocks, WARN is for the verifier)');
-  runLocal(`hard-rules --base ${DEV} --strict`, process.execPath,
-    [join(HERE, 'hard-rules.mjs'), '--base', DEV, '--strict'], REPO_ROOT);
-  const committed = git(['-c', 'core.quotepath=off', 'diff', '--name-only', `${DEV}...HEAD`]).split('\n').filter(Boolean);
+  runLocal(`hard-rules --base ${BASE} --strict`, process.execPath,
+    [join(HERE, 'hard-rules.mjs'), '--base', BASE, '--strict'], REPO_ROOT);
+  const committed = git(['-c', 'core.quotepath=off', 'diff', '--name-only', `${BASE}...HEAD`]).split('\n').filter(Boolean);
   await verify([...new Set([...committed, ...changedFiles()])]);
   if (!dryRun) markPassed(REPO_ROOT, key);
 }
 
-async function check() {
-  requireBranch(DEV);
+/** `check [--base <ref>] [--ci]`: the land gate alone. --ci (GitHub Actions): no cache, base defaults to
+ * <remote>/$GITHUB_BASE_REF on a pull request. */
+async function check(opts) {
+  let override = opts.base ?? null;
+  if (!override && opts.flags.has('ci') && process.env.GITHUB_BASE_REF) override = `${cfg.remote ?? 'origin'}/${process.env.GITHUB_BASE_REF}`;
+  resolveBase(override);
   await gate();
-  console.log(`\n  ✔ check passed (same gate as ${hint('land')}; nothing was committed or merged)`);
+  console.log(`\n  ✔ check passed vs ${BASE} (same gate as ${hint(GITHUB ? 'pr' : 'land')}; nothing was committed or merged)`);
 }
 
 // ---------- land: task branch → DEV (fast-forward) ----------
 
 async function land() {
+  if (GITHUB) return pr();
   const branch = currentBranch();
   if (!branch) die('detached HEAD — checkout the task branch first.');
   if ([DEV, MAIN].includes(branch)) die(`on ${branch}: run land from the task branch (its worktree); use promote for ${MAIN}.`);
   requireBranch(DEV);
+  BASE = DEV;
   const dirty = git(['status', '--porcelain']);
   if (dirty && !dryRun) die(`uncommitted changes — ship or discard them first:\n${dirty}`);
   if (git(['rev-list', '--count', `${DEV}..HEAD`]) === '0' && !dryRun) die(`nothing to land: ${branch} has no commits beyond ${DEV}.`);
@@ -623,6 +654,7 @@ function nextRelease(ref) {
 }
 
 function promote() {
+  if (GITHUB) return DEV === MAIN ? release() : openPr(DEV, MAIN);
   step(`promote ${DEV} → ${MAIN}`);
   requireBranch(DEV);
   requireBranch(MAIN);
@@ -655,6 +687,7 @@ function promote() {
 
 /** Plain push (never forced): a rejected push means the remote diverged — warn, local stays as is. */
 function backup(refs = [DEV, MAIN, '--tags']) {
+  if (GITHUB) return console.log('\n  (github mode: GitHub is the source of truth — nothing to back up; task branches are pushed by pr)');
   const remote = cfg.remote;
   if (!remote || git(['remote', 'get-url', remote], { allowFail: true }) === null) {
     return console.log(`\n  (no ${remote ?? 'backup'} remote — backup push skipped)`);
@@ -677,9 +710,22 @@ function doctor() {
 
   step('doctor: repo readiness');
   if (!cfg.found) warn('no .devflow.json — using defaults (dev → main, origin backup, no gate areas). Run /devflow:init to opt in.');
+  const remoteRef = b => cfg.remote && git(['rev-parse', '--verify', '--quiet', `refs/remotes/${cfg.remote}/${b}`], { allowFail: true }) !== null;
   for (const [label, b] of [['integration', DEV], ['release', MAIN]]) {
-    if (!branchExists(b)) bad(`${label} branch '${b}' does not exist (create it: git branch ${b} ${b === DEV ? MAIN : 'HEAD'}).`);
-    else ok(`${label} branch '${b}' exists`);
+    if (branchExists(b)) ok(`${label} branch '${b}' exists`);
+    else if (GITHUB && remoteRef(b)) ok(`${label} branch '${cfg.remote}/${b}' exists`);
+    else if (GITHUB && DEV === MAIN) bad(`${label} branch '${b}' exists neither locally nor on ${cfg.remote} — create it on GitHub (the repository's default branch) and fetch; ask the user.`);
+    else bad(`${label} branch '${b}' does not exist (create it: git branch ${b} ${b === DEV ? MAIN : 'HEAD'}${GITHUB ? `, then push it to GitHub once` : ''}).`);
+  }
+  if (GITHUB) {
+    const url = cfg.remote && git(['remote', 'get-url', cfg.remote], { allowFail: true });
+    if (!url) bad(`github mode needs the remote '${cfg.remote}'.`);
+    else ok(`remote ${cfg.remote}: ${githubSlug(url) ?? url}`);
+    try { new RegExp(cfg.github.pushBranches); ok(`github.pushBranches: ${cfg.github.pushBranches}`); } catch (e) { bad(`github.pushBranches is not a valid regex: ${e.message}`); }
+    if (!existsSync(join(REPO_ROOT, '.github', 'workflows', 'devflow-gate.yml'))) warn('no .github/workflows/devflow-gate.yml — CI does not run the gate on pull requests (rerun /devflow:init --github).');
+    else ok('CI runs the gate: .github/workflows/devflow-gate.yml');
+    if (spawnSync('gh', ['auth', 'status'], { stdio: 'ignore' }).status !== 0) warn('gh CLI not installed / not logged in — pr prints what is needed to open the PR (GitHub tools or a compare URL).');
+    else ok('gh CLI logged in');
   }
   const id = (k) => git(['config', k], { allowFail: true });
   if (!id('user.name') || !id('user.email')) bad('git user.name / user.email not set — commits and tags need an identity.');
@@ -731,7 +777,7 @@ function doctor() {
 /** One line per task worktree (branch, ahead/behind DEV, dirty, handoff note, queue task), then the
  * top ready tasks. Git says who is working; the queue says what is left. */
 function status() {
-  requireBranch(DEV);
+  if (GITHUB) resolveBase(); else requireBranch(DEV);
   const mainRoot = mainCheckout(REPO_ROOT);
   const queue = loadQueue(queueFile(REPO_ROOT));
   const tasks = itemsOf(queue.sections);
@@ -742,7 +788,7 @@ function status() {
   step(`task worktrees (${trees.length}) — vs ${DEV}`);
   if (!trees.length) console.log('  (none)');
   for (const [branch, path] of trees) {
-    const [behind, ahead] = (git(['rev-list', '--left-right', '--count', `${DEV}...${branch}`], { allowFail: true }) ?? '0\t0').split(/\s+/);
+    const [behind, ahead] = (git(['rev-list', '--left-right', '--count', `${BASE}...${branch}`], { allowFail: true }) ?? '0\t0').split(/\s+/);
     const dirty = git(['-C', path, 'status', '--porcelain'], { allowFail: true });
     const note = existsSync(join(path, ...cfg.handoff.dir.split('/'), `${branch.replace(/\//g, '-')}.md`));
     const t = taskOf(branch);
@@ -768,7 +814,7 @@ function status() {
 
 // ---------- cloud-push: back up a cloud session branch (ccr-*) to the remote ----------
 
-const CLOUD_BRANCH = /^ccr-[\w.-]+$/;
+const CLOUD_BRANCH = new RegExp(cfg.cloudBranches);
 
 /** The only push allowed from a cloud session (its container is thrown away). Plain push of the current
  * ccr-* branch: never DEV/MAIN/tags, never forced. Landing still happens locally via land. */
@@ -776,25 +822,27 @@ function cloudPush() {
   const remote = cfg.remote;
   if (!remote || git(['remote', 'get-url', remote], { allowFail: true }) === null) die(`no ${remote ?? 'backup'} remote.`);
   const branch = currentBranch();
-  if (!branch || !CLOUD_BRANCH.test(branch)) die(`cloud-push only pushes a ccr-* session branch (current: ${branch || 'detached HEAD'}).`);
+  if (!branch || !CLOUD_BRANCH.test(branch) || [DEV, MAIN].includes(branch)) die(`cloud-push only pushes a cloud session branch matching ${cfg.cloudBranches} (ccr-*, claude/*; current: ${branch || 'detached HEAD'}).`);
   if (git(['status', '--porcelain', '--untracked-files=no'])) die('tracked files have uncommitted changes — commit them first, or they are lost with the container.');
 
   step('hard rules (secrets etc.) before leaving the container');
-  const base = branchExists(DEV) ? DEV : `${remote}/${DEV}`;
+  const base = baseRef(REPO_ROOT, cfg) ?? `${remote}/${DEV}`;
   if (spawnSync(process.execPath, [join(HERE, 'hard-rules.mjs'), '--strict', '--base', base], { cwd: REPO_ROOT, stdio: 'inherit' }).status !== 0) {
     die('hard-rules reported ERROR; fix it before cloud-push.');
   }
 
   step(`cloud-push: ${branch} → ${remote} (backup only, no force)`);
-  if (!exec('git', ['push', remote, branch], { allowFail: true })) {
+  if (!exec('git', ['push', '-u', remote, branch], { allowFail: true })) {
     die(`push rejected (${remote} has commits this branch lacks?). Do not force; ask the user.`);
   }
-  console.log(`  ✔ pushed. Land locally: git fetch ${remote} ${branch} → ${hint('task')} (from ${branch}) → ${hint('land')}`);
+  console.log(GITHUB ? `  ✔ pushed. Open its pull request: ${hint('pr')}`
+    : `  ✔ pushed. Land locally: git fetch ${remote} ${branch} → ${hint('task')} (from ${branch}) → ${hint('land')}`);
 }
 
 // ---------- sync: drop local branches already in DEV ----------
 
 function sync() {
+  if (GITHUB) return syncGithub();
   step(`delete local branches whose commits are all in ${DEV}`);
   requireBranch(DEV);
   const checkedOut = worktreeBranches();
@@ -890,6 +938,116 @@ function archive(opts) {
   console.log(`\n  ✔ ${name} archived and landed in ${DEV}; worktree removed.`);
 }
 
+// ---------- github mode: pr / release / sync ----------
+
+/** github mode: gate, push the task branch (plain, never forced), open or show its pull request. The PR is
+ * merged on GitHub by a human after CI (the same gate) is green. No rebase: a pushed branch is updated by
+ * merging the base into it. */
+async function pr() {
+  if (!GITHUB) die(`pr is for github mode ("mode": "github" in .devflow.json); this repo lands with ${hint('land')}.`);
+  const branch = currentBranch();
+  if (!branch) die('detached HEAD — checkout the task branch first.');
+  if ([DEV, MAIN].includes(branch)) die(`on ${branch}: open a pull request from a task branch (${hint('task')} -- feat/<scope>-<desc>).`);
+  if (!new RegExp(cfg.github.pushBranches).test(branch)) die(`${branch} does not match github.pushBranches (${cfg.github.pushBranches}) — use a task branch.`);
+  const remote = cfg.remote;
+  if (!remote || git(['remote', 'get-url', remote], { allowFail: true }) === null) die(`no ${remote ?? ''} remote — github mode needs one.`);
+  const dirty = git(['status', '--porcelain']);
+  if (dirty && !dryRun) die(`uncommitted changes — ship or discard them first:\n${dirty}`);
+  resolveBase();
+  if (git(['rev-list', '--count', `${BASE}..HEAD`]) === '0' && !dryRun) die(`nothing to open: ${branch} has no commits beyond ${BASE}.`);
+
+  await gate();
+
+  step(`push ${branch} to ${remote}`);
+  if (!exec('git', ['push', '-u', remote, branch], { allowFail: true })) {
+    die(`push rejected: ${remote}/${branch} has commits this branch lacks. Bring them in (git merge ${remote}/${branch}) or ask the user — never force.`);
+  }
+  openPr(branch, DEV);
+}
+
+/** Open the pull request head → base with the gh CLI when it is installed and logged in; otherwise print
+ * what the agent's GitHub tools (or a human with a browser) need. Never merges. */
+function openPr(head, base) {
+  const slug = githubSlug(git(['remote', 'get-url', cfg.remote], { allowFail: true }));
+  const title = git(['log', '-1', '--format=%s', head], { allowFail: true }) ?? head;
+  const gh = !dryRun && process.env.DEVFLOW_NO_GH !== '1' && spawnSync('gh', ['auth', 'status'], { cwd: REPO_ROOT, stdio: 'ignore' }).status === 0;
+  if (gh) {
+    const open = spawnSync('gh', ['pr', 'view', head, '--json', 'url,state', '-q', 'select(.state=="OPEN") | .url'], { cwd: REPO_ROOT, encoding: 'utf8' });
+    if (open.status === 0 && open.stdout.trim()) return console.log(`  ✔ pull request already open: ${open.stdout.trim()} — CI reruns on the new commits.`);
+    step(`open pull request ${head} → ${base}`);
+    if (exec('gh', ['pr', 'create', '--base', base, '--head', head, '--fill', ...(cfg.github.draft ? ['--draft'] : [])], { allowFail: true })) {
+      return console.log(`  ✔ pull request opened. Next: CI (devflow gate) green + human review → merge on GitHub → ${hint('sync')}.`);
+    }
+    console.log('  ! gh pr create failed — open it another way:');
+  }
+  console.log(`\n  DEVFLOW_OPEN_PR repo=${slug ?? '?'} base=${base} head=${head}`);
+  console.log(`  Open (or reuse) the pull request ${head} → ${base}:`);
+  console.log(`    - agent with GitHub tools: create the PR (owner/repo ${slug ?? '<from the remote>'}, base "${base}", head "${head}", title "${title}");`);
+  console.log(`      the body: what changed, how it was verified, what the reviewer should look at.`);
+  if (slug) console.log(`    - browser: https://github.com/${slug}/compare/${base}...${head}?expand=1`);
+  console.log(`  Then: CI (devflow gate) green + human review → merge on GitHub → ${hint('sync')}.`);
+}
+
+/** github mode: next version from Conventional Commits on <remote>/<release>, annotated tag, push the tag.
+ * Workflows triggered by tags (production deploy) start from here. */
+function release() {
+  if (!GITHUB) die(`release is for github mode; this repo releases with ${hint('promote')}.`);
+  const remote = cfg.remote;
+  if (!remote || git(['remote', 'get-url', remote], { allowFail: true }) === null) die(`no ${remote ?? ''} remote.`);
+  step(`release: fetch ${remote}/${MAIN} and tags`);
+  exec('git', ['fetch', '-q', '--tags', remote, MAIN]);
+  const ref = `${remote}/${MAIN}`;
+  if (git(['rev-parse', '--verify', '--quiet', ref], { allowFail: true }) === null) die(`${ref} does not exist.`);
+  const sha = git(['rev-parse', ref]);
+  const rel = nextRelease(sha);
+  if (!rel) return console.log(`  no feat/fix/perf/revert/breaking commit on ${ref} since the last tag — nothing to release.`);
+  if (git(['rev-parse', '--verify', '--quiet', `refs/tags/${rel.version}`], { allowFail: true }) !== null) die(`tag ${rel.version} already exists.`);
+  const notesFile = join(mkdtempSync(join(tmpdir(), 'devflow-')), 'notes.txt');
+  if (dryRun) console.log(rel.notes.replace(/^/gm, '    '));
+  else writeFileSync(notesFile, rel.notes);
+  exec('git', ['tag', '-a', rel.version, '-F', notesFile, sha]);
+  if (!exec('git', ['push', remote, `refs/tags/${rel.version}`], { allowFail: true })) {
+    die(`could not push tag ${rel.version} (it stays local: git push ${remote} refs/tags/${rel.version} once fixed, or delete it).`);
+  }
+  console.log(`  ✔ ${rel.version} tagged on ${sha.slice(0, 7)} and pushed (release notes: git show ${rel.version}).`);
+}
+
+/** github mode: fetch --prune, fast-forward local integration / release branches to the remote, delete
+ * local branches already merged into the remote integration branch; list branches whose remote branch is
+ * gone (squash-merged or closed PRs) for the user to delete. */
+function syncGithub() {
+  const remote = cfg.remote;
+  if (!remote || git(['remote', 'get-url', remote], { allowFail: true }) === null) die(`no ${remote ?? ''} remote.`);
+  step(`fetch ${remote} --prune`);
+  exec('git', ['fetch', '--prune', remote]);
+  const checkedOut = worktreeBranches();
+  for (const b of [...new Set([DEV, MAIN])]) {
+    const r = `${remote}/${b}`;
+    if (!branchExists(b) || git(['rev-parse', '--verify', '--quiet', r], { allowFail: true }) === null) continue;
+    if (git(['rev-parse', b]) === git(['rev-parse', r])) continue;
+    if (!isAncestor(b, r)) { console.log(`  ! local ${b} has commits ${r} does not — left as is; ask the user.`); continue; }
+    const where = checkedOut.get(b);
+    if (where && git(['-C', where, 'status', '--porcelain'])) { console.log(`  ! ${b} is checked out in ${where} with uncommitted changes — not moved.`); continue; }
+    step(`fast-forward local ${b} → ${r}`);
+    fastForward(b, r);
+  }
+  resolveBase();
+  step(`delete local branches already in ${BASE}`);
+  const current = currentBranch();
+  const merged = git(['for-each-ref', '--merged', BASE, '--format=%(refname:short)', 'refs/heads']).split('\n').filter(Boolean);
+  for (const b of merged) {
+    if ([DEV, MAIN, current].includes(b)) continue;
+    const where = checkedOut.get(b);
+    if (where) { console.log(`  ! kept ${b}: checked out in ${where} (untask it from the main checkout).`); continue; }
+    exec('git', ['branch', '-D', b]); // --merged BASE: nothing is lost
+  }
+  const gone = git(['for-each-ref', '--format=%(refname:short)%09%(upstream:track)', 'refs/heads']).split('\n')
+    .map(l => l.split('\t')).filter(([b, t]) => t === '[gone]' && !merged.includes(b) && b !== current).map(([b]) => b);
+  if (gone.length) {
+    console.log(`\n  Remote branch deleted (PR squash-merged or closed?) — check on GitHub, then delete by hand:\n    git branch -D ${gone.join(' ')}`);
+  }
+}
+
 // ---------- main ----------
 
 const [command, ...rest] = process.argv.slice(2);
@@ -902,7 +1060,9 @@ if (!cfg.found && command && command !== 'help') {
 switch (command) {
   case 'ship': await ship(opts); break;
   case 'land': await land(); break;
-  case 'check': await check(); break;
+  case 'pr': await pr(); break;
+  case 'release': release(); break;
+  case 'check': await check(opts); break;
   case 'promote': promote(); break;
   case 'sync': sync(); break;
   case 'backup': backup(); break;
@@ -915,7 +1075,7 @@ switch (command) {
   default:
     console.log(`Usage (add --dry-run to any command to only print mutating steps):
   ship -- (-m "feat(scope): subject" [-m "body"] | -F msg.txt) [--verify] [--land] [--promote] [--shared-ok] [--no-cache] <file>...
-  check                    run the land gate on the current branch, merge nothing
+  check [--base <ref>] [--ci]  run the land gate on the current branch vs ${DEV} (or <ref>), merge nothing
   land                     gate + fast-forward ${DEV} to the current task branch, push ${DEV}
   promote                  fast-forward ${MAIN} to ${DEV} + tag ${cfg.tagPrefix}X.Y.Z, push ${DEV}/${MAIN}/tag
   sync                     delete local branches already in ${DEV}
@@ -925,6 +1085,8 @@ switch (command) {
   doctor                   check the repo is ready for the devflow loop (branches, gate tooling, hooks)
   task -- <type>/<desc>    new worktree from ${DEV} for one task/session
   untask -- <branch>       remove that worktree safely (run from the main checkout)
+  pr                       github mode: gate, push the task branch, open its pull request (land = pr)
+  release                  github mode: tag ${cfg.remote}/${MAIN} with the next version and push the tag
   archive -- <change> [--no-land]  main checkout: archive a landed OpenSpec change, land it, untask`);
     process.exit(command && command !== 'help' ? 1 : 0);
 }

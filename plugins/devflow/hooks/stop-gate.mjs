@@ -8,7 +8,7 @@
 // ends the turn again. The integration / release branches are left
 // alone: hot-fix-dev gates through `ship --verify`, and the main checkout may hold other sessions' edits.
 import { spawnSync } from 'node:child_process';
-import { repoRoot, loadConfig, commandHint } from '../kit/scripts/devflow/config.mjs';
+import { repoRoot, loadConfig, commandHint, baseRef } from '../kit/scripts/devflow/config.mjs';
 import { worktreeTree, passedTree } from '../kit/scripts/devflow/gate-cache.mjs';
 
 let input = '';
@@ -32,8 +32,10 @@ const git = args => {
 const dev = cfg.integrationBranch;
 const branch = git(['branch', '--show-current']);
 if (!branch || branch === dev || branch === cfg.releaseBranch) process.exit(0);
-if (!git(['rev-parse', '--verify', '-q', dev])) process.exit(0);
-const ahead = Number(git(['rev-list', '--count', `${dev}..HEAD`]) ?? 0);
+// Cloud / github-mode clones may only have <remote>/<dev>; no base at all → nothing to compare with.
+const base = baseRef(root, cfg);
+if (!base) process.exit(0);
+const ahead = Number(git(['rev-list', '--count', `${base}..HEAD`]) ?? 0);
 if (!ahead && !git(['status', '--porcelain'])) process.exit(0);
 
 const tree = worktreeTree(root);

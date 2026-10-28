@@ -26,6 +26,9 @@ Commit `chore(devflow): update scripts` qua `npm run ship`.
 
 1. **Kiểm tra trước:** đang ở gốc một repo git (chưa có thì hỏi người dùng có `git init` không),
    cây làm việc sạch (`git status`), có Node ≥ 18. Có `.devflow.json` rồi → chuyển sang "Cập nhật".
+1.5. **Chọn chế độ:** repo có remote GitHub và muốn PR + CI (nhiều người, phiên cloud, GitHub Actions) → chế độ
+   GitHub: thêm `--github` vào mọi lệnh install dưới đây (nhánh tích hợp = nhánh release, tức GitHub flow, trừ khi
+   `--create-dev`; tạo `.github/workflows/devflow-gate.yml`; script `pr`, `release`). Không thì chế độ local.
 2. **Chạy thử:** `node <install.mjs> --dry-run`. Trình người dùng: file sẽ tạo / giữ, vùng gate dò
    được, các cảnh báo `!`. Hỏi 1 lần các điểm cần quyết (dùng AskUserQuestion, có đề xuất):
    - Nhánh tích hợp `dev` chưa có → tạo từ nhánh release (`--create-dev`)?
@@ -62,6 +65,10 @@ Commit `chore(devflow): update scripts` qua `npm run ship`.
    / kiến trúc → đề xuất người dùng chạy `/init` của Claude Code.
 7.5. **Kiểm app thật:** dự án có app chạy được → đề xuất chạy `/devflow:verify-setup` ngay (tạo skill
    `verify-app` của dự án); không có → xoá mục "Kiểm app thật" trong CLAUDE.md.
+7.8. **Chế độ GitHub:** thêm vào `.github/workflows/devflow-gate.yml` các bước cài đặt mà lệnh của vùng cần
+   (composer, docker, dịch vụ…); nhắc người dùng đặt check "devflow gate" thành required trong branch protection của
+   nhánh tích hợp và chọn kiểu merge (merge commit hoặc squash với tiêu đề PR theo Conventional Commits để `release`
+   tính được version).
 8. **Kiểm chứng:** `npm run doctor` (repo sẵn sàng: nhánh, tooling gate, hook), rồi `npm run check`
    trên nhánh hiện tại (gate phải chạy được, xanh hoặc đỏ có lý do rõ), `npm run hard-rules`.
 9. **Commit** (hỏi trước): tạo worktree / nhánh `chore/devflow-setup`, commit bằng

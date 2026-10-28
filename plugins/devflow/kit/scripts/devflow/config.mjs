@@ -8,7 +8,12 @@ import { join, resolve } from 'node:path';
 export const CONFIG_FILE = '.devflow.json';
 
 export const DEFAULTS = {
-  // Local-first flow: task branches → integrationBranch (land) → releaseBranch (promote + tag).
+  // "local": the clone is the source of truth — task branches → integrationBranch by fast-forward (land),
+  //   → releaseBranch (promote + tag); the remote is only a backup; no PR, no CI.
+  // "github": GitHub is the source of truth — task branches are pushed and reach integrationBranch through a
+  //   pull request merged after CI (the same gate, run by .github/workflows/devflow-gate.yml) and review;
+  //   `release` tags the release branch on the remote. integrationBranch may equal releaseBranch (GitHub flow).
+  mode: 'local',
   integrationBranch: 'dev',
   releaseBranch: 'main',
   // Backup remote: land/promote push integration/release branches + tags here. null = no backup push.
@@ -61,6 +66,16 @@ export const DEFAULTS = {
   },
   // Commands run by the SessionStart hook only in cloud sessions (CLAUDE_CODE_REMOTE=true).
   remoteSetup: [],
+  // Branches a cloud session works on (regex): cloud-push pushes only these.
+  cloudBranches: '^(ccr-|claude/)[\\w./-]+$',
+  github: {
+    // Task branches the agent may push in github mode (regex). Protected branches are never pushed by hand.
+    pushBranches: '^(feat|fix|chore|docs|refactor|perf|test|build|ci|style|revert)/|^(ccr-|claude/)',
+    // Open pull requests as drafts.
+    draft: false,
+    // Fetch the integration branch from the remote at session start (offline → silently skipped).
+    fetchOnStart: true,
+  },
 };
 
 function isObject(x) {
@@ -96,6 +111,25 @@ export function loadConfig(root) {
     process.exit(1);
   }
   return { ...merge(DEFAULTS, raw), found: true };
+}
+
+/** The ref the gate diffs against. github mode: the remote-tracking integration branch (fresh after a fetch),
+ * else the local one; local mode: the local branch, else the remote-tracking one (cloud / CI clones have no
+ * local integration branch). `override` (check --base) wins. null when none exists. */
+export function baseRef(root, cfg, override) {
+  const has = ref => spawnSync('git', ['rev-parse', '--verify', '--quiet', ref], { cwd: root }).status === 0;
+  if (override) return has(override) ? override : null;
+  const local = `refs/heads/${cfg.integrationBranch}`;
+  const remote = cfg.remote && `refs/remotes/${cfg.remote}/${cfg.integrationBranch}`;
+  const order = cfg.mode === 'github' ? [remote, local] : [local, remote];
+  const hit = order.find(r => r && has(r));
+  return hit ? hit.replace(/^refs\/(heads|remotes)\//, '') : null;
+}
+
+/** owner/repo of a GitHub remote URL (https, ssh, or a proxy URL ending in /owner/repo[.git]). */
+export function githubSlug(url) {
+  const m = (url ?? '').trim().match(/[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/);
+  return m ? `${m[1]}/${m[2]}` : null;
 }
 
 /** How a human runs a devflow command here: `npm run land` when package.json has the script. */
