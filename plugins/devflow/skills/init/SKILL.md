@@ -44,7 +44,7 @@ Commit `chore(devflow): update scripts` qua `npm run ship`.
    - `rules`: luật cứng riêng của dự án dò được bằng regex trên dòng thêm / xoá, ví dụ
      `{ "level": "ERROR", "files": "Controller\\.java$", "added": "^\\s*import\\s+[\\w.]+Repository;", "msg": "controller không gọi repository" }`.
      `unlessChanged` tắt luật khi có file khớp được đổi (ví dụ đổi entity mà đã có script migration).
-     Luật cần logic → `rulesModule` (xem `examples/` trong plugin).
+     Luật cần logic → `rulesModule` (module JS tự viết, export default `rules({ files, add, root, isCode, readFile })`).
    - `areas[].format`: formatter mà hook PostToolUse chạy trên từng file vừa sửa (đường dẫn file nối vào cuối
      lệnh), ví dụ `{ "cwd": "web", "run": "npx --no-install prettier --write --ignore-unknown" }`. Script dò sẵn
      prettier / gofmt / ruff / black; thiếu thì hỏi người dùng dự án format bằng gì. Không có → bỏ trống.
